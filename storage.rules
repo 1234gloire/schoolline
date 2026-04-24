@@ -1,0 +1,52 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(
+        /databases/(default)/documents/users/$(request.auth.uid)
+      );
+    }
+
+    function role() {
+      return userDoc().data.role;
+    }
+
+    function isAdmin() {
+      return isAuth() && role() == 'admin';
+    }
+
+    match /subjects/{sessionId}/{allPaths=**} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    match /submissions/{userId}/{allPaths=**} {
+      allow write: if isAuth() && request.auth.uid == userId;
+      allow read: if isAuth() && request.auth.uid == userId;
+    }
+
+    match /payments/{userId}/{allPaths=**} {
+      allow write: if isAuth() && request.auth.uid == userId;
+      allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /avatars/{userId}/{allPaths=**} {
+      allow write: if isAuth()
+        && request.auth.uid == userId
+        && (
+          request.resource == null
+          || request.resource.contentType.matches('image/.*')
+        );
+      allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

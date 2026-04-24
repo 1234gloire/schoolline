@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "258866377549",
+    "project_id": "vdfapp-7c806",
+    "storage_bucket": "vdfapp-7c806.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:258866377549:android:7646a37226d95f6943bd04",
+        "android_client_info": {
+          "package_name": "com.example.schoolline"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-1L9fyrCIC0f9ZC8EawpMuRWLpnGiDHs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

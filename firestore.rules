@@ -1,0 +1,207 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ───────────────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return userDoc().data.get('role', 'student');
+    }
+
+    function isAdmin() {
+      return isAuth() && role() == 'admin';
+    }
+
+    function isCorrector() {
+      return isAuth() && (role() == 'corrector' || role() == 'admin');
+    }
+
+    function isOwner(userId) {
+      return isAuth() && uid() == userId;
+    }
+
+    function hasOnlyKnownUserFields() {
+      return request.resource.data.keys().hasOnly([
+        'uid',
+        'displayName',
+        'email',
+        'phone',
+        'role',
+        'class',
+        'series',
+        'school',
+        'avatarUrl',
+        'createdAt',
+        'subscriptions',
+        'abandonedSubjectIds',
+        'blocked',
+        'activeCorrections',
+        'fcmToken',
+      ]);
+    }
+
+    function isValidStudentClass(value) {
+      return value == null || value in ['terminale', 'troisieme'];
+    }
+
+    function authEmailMatchesProfile() {
+      return request.auth.token.email == null
+        || request.resource.data.email == request.auth.token.email;
+    }
+
+    function isValidStudentProfileShape(userId) {
+      return hasOnlyKnownUserFields()
+        && request.resource.data.uid == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.email is string
+        && request.resource.data.phone is string
+        && request.resource.data.role == 'student'
+        && isValidStudentClass(request.resource.data.get('class', null))
+        && request.resource.data.series is string
+        && request.resource.data.school is string
+        && request.resource.data.get('avatarUrl', '') is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.get('subscriptions', []) is list
+        && request.resource.data.get('abandonedSubjectIds', []) is list
+        && request.resource.data.get('activeCorrections', 0) is int
+        && request.resource.data.get('blocked', false) is bool
+        && (
+          !('fcmToken' in request.resource.data)
+          || request.resource.data.fcmToken is string
+        )
+        && authEmailMatchesProfile();
+    }
+
+    function isSafeStudentProfileCreate(userId) {
+      return isValidStudentProfileShape(userId)
+        && request.resource.data.get('subscriptions', []).size() == 0
+        && request.resource.data.get('abandonedSubjectIds', []).size() == 0
+        && request.resource.data.get('activeCorrections', 0) == 0
+        && request.resource.data.get('blocked', false) == false;
+    }
+
+    function isSafeStudentProfileUpdate() {
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      let previousAbandoned = resource.data.get('abandonedSubjectIds', []);
+      let nextAbandoned = request.resource.data.get('abandonedSubjectIds', []);
+
+      return isValidStudentProfileShape(uid())
+        && changedKeys.hasOnly([
+          'displayName',
+          'email',
+          'phone',
+          'class',
+          'series',
+          'school',
+          'avatarUrl',
+          'abandonedSubjectIds',
+          'fcmToken',
+        ])
+        && nextAbandoned.size() >= previousAbandoned.size()
+        && nextAbandoned.hasAll(previousAbandoned);
+    }
+
+    // ─── Users ─────────────────────────────────────────────────
+    match /users/{userId} {
+      // L'utilisateur lit son propre profil ; l'admin lit tous les profils
+      allow read: if isOwner(userId) || isAdmin();
+
+      // L'utilisateur crée uniquement un profil élève sain et ne peut pas
+      // s'attribuer des droits ou des accès payants côté client.
+      allow create: if isOwner(userId) && isSafeStudentProfileCreate(userId);
+
+      // L'élève met à jour seulement son profil, son token FCM et la liste
+      // des épreuves abandonnées (en ajout uniquement).
+      allow update: if isOwner(userId) && isSafeStudentProfileUpdate();
+
+      // Seul l'admin peut changer les rôles ou supprimer
+      allow write: if isAdmin();
+    }
+
+    // ─── Sessions ───────────────────────────────────────────────
+    match /sessions/{sessionId} {
+      // Tout utilisateur connecté peut lire les sessions
+      allow read: if isAuth();
+
+      // Seul l'admin crée/modifie/supprime les sessions
+      allow write: if isAdmin();
+
+      // ─── Épreuves (sous-collection) ───
+      match /subjects/{subjectId} {
+        allow read: if isAuth();
+        allow write: if isAdmin();
+      }
+
+      // ─── Bulletins de résultats (sous-collection) ───
+      // L'élève lit uniquement son propre bulletin.
+      // L'admin lit et écrit tout (publication via Cloud Function Admin SDK).
+      match /studentResults/{userId} {
+        allow read: if isAuth() && (isOwner(userId) || isAdmin());
+        allow write: if isAdmin();
+      }
+    }
+
+    // ─── Soumissions ────────────────────────────────────────────
+    match /submissions/{submissionId} {
+
+      // L'élève lit ses propres soumissions.
+      // Le correcteur ne lit que ses copies assignées.
+      // L'admin lit tout.
+      allow read: if isAuth() && (
+        isOwner(resource.data.userId)
+        || isAdmin()
+        || (role() == 'corrector' && resource.data.correctorId == uid())
+      );
+
+      // L'élève crée sa propre soumission
+      // Interdit de créer avec un statut autre que 'submitted'
+      allow create: if isAuth()
+        && isOwner(request.resource.data.userId)
+        && request.resource.data.status == 'submitted'
+        // Interdit de pré-remplir les champs de correction
+        && !('finalScore' in request.resource.data)
+        && !('correctorId' in request.resource.data)
+        && !('aiScore' in request.resource.data);
+
+      // Les mutations clients directes sont réservées à l'admin.
+      // Les corrections / publications passent par Cloud Functions (Admin SDK).
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Paiements ──────────────────────────────────────────────
+    match /payments/{paymentId} {
+      // L'élève lit ses propres demandes de paiement
+      // L'admin lit tout
+      allow read: if isAuth() && (
+        isOwner(resource.data.userId) || isAdmin()
+      );
+
+      // L'élève crée uniquement pour lui-même, statut forcé à 'pending'
+      allow create: if isAuth()
+        && isOwner(request.resource.data.userId)
+        && request.resource.data.status == 'pending'
+        && !('reviewedAt' in request.resource.data)
+        && !('reviewedBy' in request.resource.data);
+
+      // Seul l'admin valide / rejette (via Cloud Function Admin SDK)
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── Données d'entraînement IA (admin uniquement) ───────────
+    match /training_data/{docId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
