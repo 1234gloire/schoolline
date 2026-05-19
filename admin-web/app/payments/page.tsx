@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import {
   AlertTriangle,
-  CheckCircle2,
   Clock3,
   CreditCard,
   Eye,
@@ -55,7 +54,18 @@ function PaymentsContent() {
     return unsub;
   }, []);
 
-  const payments = allPayments.filter((p) => p.status === 'pending');
+  const manualPendingPayments = allPayments.filter(
+    (p) =>
+      p.status === 'pending' &&
+      p.provider !== 'paydunya' &&
+      p.provider !== 'feexpay' &&
+      Boolean(p.proofFileRef)
+  );
+  const automaticPendingPayments = allPayments.filter(
+    (p) =>
+      p.status === 'pending' &&
+      (p.provider === 'paydunya' || p.provider === 'feexpay')
+  );
 
   async function openProof(payment: PaymentModel) {
     setPreviewPayment(payment);
@@ -149,20 +159,28 @@ function PaymentsContent() {
 
   function toggleSelectAll() {
     setSelectedIds(
-      selectedIds.size === payments.length
+      selectedIds.size === manualPendingPayments.length
         ? new Set()
-        : new Set(payments.map((p) => p.id))
+        : new Set(manualPendingPayments.map((p) => p.id))
     );
   }
 
-  const displayed = tab === 'pending' ? payments : allPayments;
+  const displayed = tab === 'pending' ? manualPendingPayments : allPayments;
   const counts = {
-    pending:  payments.length,
+    pending:  manualPendingPayments.length,
     approved: allPayments.filter((p) => p.status === 'approved').length,
     rejected: allPayments.filter((p) => p.status === 'rejected').length,
   };
   const selectedCount = selectedIds.size;
-  const pendingTotal = payments.reduce((sum, payment) => sum + payment.amount, 0);
+  const pendingTotal = manualPendingPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const approvedTotal = allPayments
+    .filter((payment) => payment.status === 'approved')
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const automaticPendingTotal = automaticPendingPayments
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const rejectedTotal = allPayments
+    .filter((payment) => payment.status === 'rejected')
+    .reduce((sum, payment) => sum + payment.amount, 0);
 
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top_left,rgba(10,17,114,0.09),transparent_26%),linear-gradient(180deg,#f8fafc_0%,#ffffff_38%)] px-6 py-8 lg:px-8">
@@ -179,8 +197,8 @@ function PaymentsContent() {
                   Paiements élèves
                 </h1>
                 <p className="max-w-2xl text-sm leading-6 text-white/72">
-                  Validez rapidement les preuves reçues pour débloquer les sessions
-                  payantes et éviter les frictions côté élève.
+                  Suivez les encaissements PayDunya, les paiements en cours de
+                  confirmation et l&apos;historique des transactions élèves.
                 </p>
               </div>
 
@@ -221,46 +239,55 @@ function PaymentsContent() {
 
               <div className="mt-4 space-y-3">
                 <SummaryRow
-                  label="Montant en attente"
+                  label="Total encaissé"
+                  value={`${approvedTotal.toLocaleString('fr-FR')} FCFA`}
+                />
+                <SummaryRow
+                  label="PayDunya en cours"
+                  value={`${automaticPendingTotal.toLocaleString('fr-FR')} FCFA`}
+                />
+                <SummaryRow
+                  label="Preuves manuelles"
                   value={`${pendingTotal.toLocaleString('fr-FR')} FCFA`}
                 />
                 <SummaryRow
-                  label="Sélection courante"
-                  value={
-                    selectedCount > 0
-                      ? `${selectedCount} paiement(s)`
-                      : 'Aucune sélection'
-                  }
-                />
-                <SummaryRow
                   label="Vue active"
-                  value={tab === 'pending' ? 'Validation en attente' : 'Historique complet'}
+                  value={tab === 'pending' ? 'Preuves manuelles' : 'Historique complet'}
                 />
               </div>
             </div>
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[
             {
-              label: 'En attente',
+              label: 'Encaissé',
+              value: approvedTotal.toLocaleString('fr-FR'),
+              suffix: 'FCFA',
+              helper: `${counts.approved} paiement(s) validé(s)`,
+              icon: CreditCard,
+              tone: 'green',
+            },
+            {
+              label: 'PayDunya en cours',
+              value: automaticPendingTotal.toLocaleString('fr-FR'),
+              suffix: 'FCFA',
+              helper: `${automaticPendingPayments.length} confirmation(s)`,
+              icon: Clock3,
+              tone: 'blue',
+            },
+            {
+              label: 'Preuves manuelles',
               value: counts.pending,
-              helper: 'Accès encore bloqués',
+              helper: `${pendingTotal.toLocaleString('fr-FR')} FCFA à vérifier`,
               icon: Clock3,
               tone: 'orange',
             },
             {
-              label: 'Validés',
-              value: counts.approved,
-              helper: 'Paiements débloqués',
-              icon: CheckCircle2,
-              tone: 'green',
-            },
-            {
               label: 'Rejetés',
               value: counts.rejected,
-              helper: 'Dossiers à régulariser',
+              helper: `${rejectedTotal.toLocaleString('fr-FR')} FCFA non encaissé`,
               icon: XCircle,
               tone: 'red',
             },
@@ -275,6 +302,8 @@ function PaymentsContent() {
                     className={`rounded-2xl border p-3 ${
                       item.tone === 'orange'
                         ? 'border-orange-200 bg-orange-50 text-orange-700'
+                        : item.tone === 'blue'
+                          ? 'border-blue-200 bg-blue-50 text-blue-700'
                         : item.tone === 'green'
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                           : 'border-red-200 bg-red-50 text-red-700'
@@ -287,12 +316,19 @@ function PaymentsContent() {
                   className={`mt-5 text-3xl font-semibold tracking-tight ${
                     item.tone === 'orange'
                       ? 'text-orange-700'
+                      : item.tone === 'blue'
+                        ? 'text-blue-700'
                       : item.tone === 'green'
                         ? 'text-emerald-700'
                         : 'text-red-700'
                   }`}
                 >
                   {item.value}
+                  {'suffix' in item && item.suffix && (
+                    <span className="ml-1 text-base font-semibold text-slate-500">
+                      {item.suffix}
+                    </span>
+                  )}
                 </p>
                 <p className="mt-1 text-sm font-medium text-gray-700">{item.label}</p>
                 <p className="mt-2 text-sm text-gray-500">{item.helper}</p>
@@ -347,7 +383,7 @@ function PaymentsContent() {
                         }`}
                       >
                         {currentTab === 'pending'
-                          ? 'Vérifier, valider ou rejeter les preuves'
+                          ? 'Vérifier les preuves manuelles'
                           : 'Consulter toutes les validations passées'}
                       </p>
                     </button>
@@ -355,13 +391,13 @@ function PaymentsContent() {
                 })}
               </div>
 
-              {tab === 'pending' && payments.length > 0 && (
+              {tab === 'pending' && manualPendingPayments.length > 0 && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <label className="flex items-center gap-2 text-sm text-slate-600">
                     <input
                       type="checkbox"
                       className="h-4 w-4 rounded"
-                      checked={selectedIds.size === payments.length && payments.length > 0}
+                      checked={selectedIds.size === manualPendingPayments.length && manualPendingPayments.length > 0}
                       onChange={toggleSelectAll}
                     />
                     Tout sélectionner
@@ -465,6 +501,11 @@ function PaymentsContent() {
                                 {payment.sessionTitle}
                               </p>
                               <PaymentStatusBadge status={payment.status} />
+                              {payment.provider && payment.provider !== 'manual' && (
+                                <Badge className="border border-blue-200 bg-blue-50 text-blue-700">
+                                  {payment.provider}
+                                </Badge>
+                              )}
                             </div>
 
                             <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
@@ -497,16 +538,18 @@ function PaymentsContent() {
                           </div>
 
                           <div className="flex flex-wrap gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openProof(payment)}
-                            >
-                              <Eye className="h-4 w-4" />
-                              Voir preuve
-                            </Button>
+                            {payment.proofFileRef && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openProof(payment)}
+                              >
+                                <Eye className="h-4 w-4" />
+                                Voir preuve
+                              </Button>
+                            )}
 
-                            {payment.status === 'pending' && (
+                            {payment.status === 'pending' && payment.proofFileRef && (
                               <>
                                 <Button
                                   size="sm"

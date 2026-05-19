@@ -258,6 +258,9 @@ function paymentFromDoc(id: string, data: DocumentData): PaymentModel {
     reviewedAt: data.reviewedAt ? toDate(data.reviewedAt) : undefined,
     reviewedBy: data.reviewedBy,
     rejectionReason: data.rejectionReason,
+    provider: data.provider,
+    invoiceUrl: data.invoiceUrl,
+    paydunyaToken: data.paydunyaToken,
   };
 }
 

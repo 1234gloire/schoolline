@@ -74,6 +74,9 @@ export interface PaymentModel {
   reviewedAt?: Date;
   reviewedBy?: string;
   rejectionReason?: string;
+  provider?: string;
+  invoiceUrl?: string;
+  paydunyaToken?: string;
 }
 
 export interface SubmissionModel {
