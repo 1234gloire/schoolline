@@ -232,6 +232,13 @@ function SessionsContent() {
         .length,
     [sessions, subjectsBySession]
   );
+  const pendingOnDemandCount = useMemo(
+    () =>
+      sessions.filter(
+        (session) => session.isOnDemand && session.status === 'draft'
+      ).length,
+    [sessions]
+  );
   const sessionSeriesOptions = seriesOptionsForClass(studentClass);
   const subjectSeriesOptions = seriesOptionsForSession(activeSession);
 
@@ -683,6 +690,11 @@ function SessionsContent() {
                 <Badge className="border border-emerald-200/30 bg-emerald-50/12 text-emerald-100">
                   {publishedSessionsCount} publiée(s)
                 </Badge>
+                {pendingOnDemandCount > 0 && (
+                  <Badge className="border border-yellow-200/30 bg-yellow-50/12 text-yellow-100">
+                    {pendingOnDemandCount} demande(s) à composer
+                  </Badge>
+                )}
               </div>
 
               <div className="pt-2">
@@ -862,6 +874,12 @@ function SessionsContent() {
                             {session.title}
                           </p>
                           <StatusPill status={session.status} />
+                          {session.isOnDemand && (
+                            <Badge className="border border-yellow-200 bg-yellow-50 text-yellow-700">
+                              À la demande ·{' '}
+                              {session.visibility === 'private' ? 'Privée' : 'Publique'}
+                            </Badge>
+                          )}
                           <Badge className="border border-slate-200 bg-slate-100 text-slate-700">
                             {subjects.length} épreuve{subjects.length > 1 ? 's' : ''}
                           </Badge>

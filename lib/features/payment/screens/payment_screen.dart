@@ -1,9 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/exam_sim_palette.dart';
@@ -25,50 +23,13 @@ class PaymentScreen extends ConsumerStatefulWidget {
 }
 
 class _PaymentScreenState extends ConsumerState<PaymentScreen> {
-  bool _isCreatingInvoice = false;
-
-  Future<void> _payWithPaydunya(SessionModel session) async {
-    setState(() => _isCreatingInvoice = true);
-    try {
-      final callable = FirebaseFunctions.instanceFor(
-        region: AppConstants.functionsRegion,
-      ).httpsCallable('createPaydunyaInvoice');
-
-      final result = await callable.call({'sessionId': session.id});
-      final invoiceUrl = result.data['invoiceUrl'] as String;
-      final paymentId = result.data['paymentId'] as String;
-
-      if (!mounted) return;
-
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => _PaydunyaWebView(
-            invoiceUrl: invoiceUrl,
-            paymentId: paymentId,
-            session: session,
-          ),
-        ),
-      );
-    } on FirebaseFunctionsException catch (e) {
-      if (!mounted) return;
-      final msg = e.code == 'already-exists'
-          ? 'Tu as déjà accès à cette session.'
-          : (e.message ?? 'Impossible de créer la facture. Réessaie.');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), backgroundColor: AppColors.error),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Erreur réseau. Vérifie ta connexion et réessaie.'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isCreatingInvoice = false);
-    }
+  void _payWithMobileMoney(SessionModel session) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _MobileMoneyCheckoutScreen(session: session),
+      ),
+    );
   }
 
   @override
@@ -164,12 +125,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
           body: paymentAsync.when(
             data: (existingPayment) {
-              if (existingPayment != null && existingPayment.isPending) {
+              if (existingPayment != null &&
+                  existingPayment.isPending &&
+                  !existingPayment.isGhostPending) {
                 return _PendingView(
                   payment: existingPayment,
                   session: session,
-                  onResumePayment: existingPayment.provider == 'paydunya'
-                      ? () => _payWithPaydunya(session)
+                  onResumePayment: existingPayment.isMobileMoney
+                      ? () => _payWithMobileMoney(session)
                       : null,
                 );
               }
@@ -178,10 +141,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               }
               return _PaymentForm(
                 session: session,
-                isCreatingInvoice: _isCreatingInvoice,
                 rejectedPayment:
                     existingPayment?.isRejected == true ? existingPayment : null,
-                onPaydunya: () => _payWithPaydunya(session),
+                onPay: () => _payWithMobileMoney(session),
               );
             },
             loading: () =>
@@ -217,98 +179,289 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 }
 
-// ─── WebView PayDunya ─────────────────────────────────────────────
+// ─── Checkout Mobile Money ────────────────────────────────────────
 
-class _PaydunyaWebView extends StatefulWidget {
-  final String invoiceUrl;
-  final String paymentId;
+enum _MobileMoneyStage { phone, submitting, pending, approved, rejected }
+
+class _MobileMoneyCheckoutScreen extends StatefulWidget {
   final SessionModel session;
 
-  const _PaydunyaWebView({
-    required this.invoiceUrl,
-    required this.paymentId,
-    required this.session,
-  });
+  const _MobileMoneyCheckoutScreen({required this.session});
 
   @override
-  State<_PaydunyaWebView> createState() => _PaydunyaWebViewState();
+  State<_MobileMoneyCheckoutScreen> createState() =>
+      _MobileMoneyCheckoutScreenState();
 }
 
-class _PaydunyaWebViewState extends State<_PaydunyaWebView> {
-  late final WebViewController _controller;
-  bool _loading = true;
-  bool _isClosing = false;
+class _MobileMoneyCheckoutScreenState
+    extends State<_MobileMoneyCheckoutScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _phoneController = TextEditingController();
 
-  void _closeWebView(bool paid) {
-    if (_isClosing) return;
-    _isClosing = true;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final navigator = Navigator.of(context);
-      if (navigator.canPop()) {
-        navigator.pop(paid);
-      }
-    });
-  }
+  _MobileMoneyStage _stage = _MobileMoneyStage.phone;
+  String? _paymentId;
+  String? _errorMessage;
+  bool _polling = false;
 
   @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) => setState(() => _loading = true),
-          onPageFinished: (_) => setState(() => _loading = false),
-          onNavigationRequest: (request) {
-            final url = request.url;
-            // Intercepte les URLs de retour pour fermer la WebView
-            if (url.startsWith(AppConstants.paydunyaReturnUrl) ||
-                url.startsWith(AppConstants.paydunyaCancelUrl)) {
-              final cancelled = url.startsWith(AppConstants.paydunyaCancelUrl);
-              _closeWebView(!cancelled);
-              return NavigationDecision.prevent;
-            }
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.invoiceUrl));
+  void dispose() {
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final digits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    final localNumber = digits.startsWith('0') ? digits.substring(1) : digits;
+    final phoneNumber = '242$localNumber';
+
+    setState(() {
+      _stage = _MobileMoneyStage.submitting;
+      _errorMessage = null;
+    });
+
+    try {
+      final result = await FirebaseFunctions.instanceFor(
+        region: AppConstants.functionsRegion,
+      ).httpsCallable('createPawapayPayment').call({
+        'sessionId': widget.session.id,
+        'phoneNumber': phoneNumber,
+      });
+
+      _paymentId = result.data['paymentId'] as String;
+      if (!mounted) return;
+      setState(() => _stage = _MobileMoneyStage.pending);
+      _startPolling();
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _stage = _MobileMoneyStage.phone;
+        _errorMessage = e.code == 'already-exists'
+            ? 'Tu as déjà accès à cette session.'
+            : (e.message ?? 'Numéro invalide ou paiement refusé. Réessaie.');
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _stage = _MobileMoneyStage.phone;
+        _errorMessage = 'Erreur réseau. Vérifie ta connexion et réessaie.';
+      });
+    }
+  }
+
+  Future<void> _startPolling() async {
+    if (_polling) return;
+    _polling = true;
+    const maxTries = 25;
+    const interval = Duration(seconds: 4);
+
+    final callable = FirebaseFunctions.instanceFor(
+      region: AppConstants.functionsRegion,
+    ).httpsCallable('checkPawapayPaymentStatus');
+
+    var tries = 0;
+    while (tries < maxTries && mounted) {
+      await Future.delayed(interval);
+      if (!mounted) break;
+      try {
+        final result = await callable.call({'paymentId': _paymentId});
+        final status = result.data['status'] as String;
+        if (status == 'approved') {
+          if (mounted) setState(() => _stage = _MobileMoneyStage.approved);
+          _polling = false;
+          return;
+        } else if (status == 'rejected') {
+          if (mounted) {
+            setState(() {
+              _stage = _MobileMoneyStage.rejected;
+              _errorMessage =
+                  result.data['reason'] as String? ?? 'Le paiement a échoué.';
+            });
+          }
+          _polling = false;
+          return;
+        }
+      } catch (_) {
+        // Erreur transitoire : on continue le sondage.
+      }
+      tries++;
+    }
+
+    _polling = false;
+    if (mounted && _stage == _MobileMoneyStage.pending) {
+      // Délai écoulé : l'écran principal continuera d'afficher l'état "en attente".
+      Navigator.of(context).pop(false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Paiement PayDunya'),
+        title: const Text('Paiement Mobile Money'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => _closeWebView(false),
+          onPressed: () => Navigator.of(context)
+              .pop(_stage == _MobileMoneyStage.approved),
         ),
-        actions: [
-          StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection(AppConstants.paymentsCollection)
-                .doc(widget.paymentId)
-                .snapshots(),
-            builder: (ctx, snap) {
-              final data = snap.data?.data() as Map<String, dynamic>?;
-              final approved = data?['status'] == 'approved';
-              if (approved) {
-                _closeWebView(true);
-              }
-              return const SizedBox.shrink();
-            },
-          ),
-        ],
       ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-          if (_loading)
-            const Center(child: CircularProgressIndicator()),
-        ],
+      body: switch (_stage) {
+        _MobileMoneyStage.phone => _buildPhoneForm(),
+        _MobileMoneyStage.submitting =>
+          const Center(child: CircularProgressIndicator()),
+        _MobileMoneyStage.pending => _buildPendingView(),
+        _MobileMoneyStage.approved => _buildResultView(success: true),
+        _MobileMoneyStage.rejected => _buildResultView(success: false),
+      },
+    );
+  }
+
+  Widget _buildPhoneForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Paiement Mobile Money',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tu vas recevoir une demande de paiement de '
+              '${widget.session.price.toStringAsFixed(0)} FCFA sur ton '
+              'téléphone Mobile Money.',
+              style: TextStyle(color: Colors.grey[600], fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 24),
+            if (_errorMessage != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withAlpha(15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  _errorMessage!,
+                  style: TextStyle(color: AppColors.error, fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            TextFormField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                labelText: 'Numéro Mobile Money',
+                prefixText: '+242 ',
+                hintText: '06 xxx xx xx',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              validator: (value) {
+                final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
+                if (digits.length < 9) return 'Numéro invalide';
+                return null;
+              },
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: Text(
+                  'Payer ${widget.session.price.toStringAsFixed(0)} FCFA',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPendingView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            const Text(
+              'Confirme sur ton téléphone',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Une demande de paiement Mobile Money a été envoyée au '
+              '+242 ${_phoneController.text}. Compose le code USSD ou '
+              'valide la notification reçue pour confirmer.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600], fontSize: 13, height: 1.4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResultView({required bool success}) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              success ? Icons.check_circle_rounded : Icons.cancel_rounded,
+              color: success ? AppColors.success : AppColors.error,
+              size: 64,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              success ? 'Paiement confirmé !' : 'Paiement échoué',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            if (!success && _errorMessage != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              ),
+            ],
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(success),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Fermer'),
+            ),
+            if (!success) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => setState(() {
+                  _stage = _MobileMoneyStage.phone;
+                  _errorMessage = null;
+                }),
+                child: const Text('Réessayer'),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -318,15 +471,13 @@ class _PaydunyaWebViewState extends State<_PaydunyaWebView> {
 
 class _PaymentForm extends StatelessWidget {
   final SessionModel session;
-  final bool isCreatingInvoice;
   final PaymentModel? rejectedPayment;
-  final VoidCallback onPaydunya;
+  final VoidCallback onPay;
 
   const _PaymentForm({
     required this.session,
-    required this.isCreatingInvoice,
     required this.rejectedPayment,
-    required this.onPaydunya,
+    required this.onPay,
   });
 
   @override
@@ -435,7 +586,7 @@ class _PaymentForm extends StatelessWidget {
 
           const SizedBox(height: 24),
 
-          // ── PayDunya ──────────────────────────────────────────────
+          // ── Mobile Money ──────────────────────────────────────────
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
@@ -458,34 +609,10 @@ class _PaymentForm extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Payer avec PayDunya',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
-                        Text(
-                          'Mobile Money · Carte bancaire · Wave',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withAlpha(30),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      'Recommandé',
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold),
+                    child: Text(
+                      'Payer avec Mobile Money',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                   ),
                 ]),
@@ -493,19 +620,10 @@ class _PaymentForm extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: isCreatingInvoice ? null : onPaydunya,
-                    icon: isCreatingInvoice
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.bolt_rounded, size: 20),
+                    onPressed: onPay,
+                    icon: const Icon(Icons.bolt_rounded, size: 20),
                     label: Text(
-                      isCreatingInvoice
-                          ? 'Préparation...'
-                          : 'Payer ${session.price.toStringAsFixed(0)} FCFA',
+                      'Payer ${session.price.toStringAsFixed(0)} FCFA',
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1A56DB),
@@ -604,7 +722,7 @@ class _PendingView extends StatelessWidget {
               decoration: BoxDecoration(
                   color: AppColors.warning.withAlpha(20),
                   shape: BoxShape.circle),
-              child: payment.isFeexpay || payment.provider == 'paydunya'
+              child: payment.isMobileMoney
                   ? Padding(
                       padding: const EdgeInsets.all(20),
                       child: CircularProgressIndicator(
@@ -615,7 +733,7 @@ class _PendingView extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             Text(
-              payment.provider == 'paydunya'
+              payment.isMobileMoney
                   ? 'Confirmation en cours…'
                   : 'Preuve envoyée',
               style: const TextStyle(
@@ -623,7 +741,7 @@ class _PendingView extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              payment.provider == 'paydunya'
+              payment.isMobileMoney
                   ? 'Ton paiement est en cours de vérification. Tu recevras une notification dès confirmation.'
                   : 'Ton paiement pour "${session.title}" est en attente de validation par un admin.',
               textAlign: TextAlign.center,

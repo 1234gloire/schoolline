@@ -41,6 +41,7 @@ class StudentResultModel {
   final String mention;
   final List<SubjectResultEntry> subjects;
   final DateTime publishedAt;
+  final DateTime lastSubmittedAt;
 
   const StudentResultModel({
     required this.userId,
@@ -52,6 +53,7 @@ class StudentResultModel {
     required this.mention,
     required this.subjects,
     required this.publishedAt,
+    required this.lastSubmittedAt,
   });
 
   factory StudentResultModel.fromFirestore(DocumentSnapshot doc) {
@@ -68,6 +70,8 @@ class StudentResultModel {
           .map((e) => SubjectResultEntry.fromMap(e as Map<String, dynamic>))
           .toList(),
       publishedAt: (data['publishedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      lastSubmittedAt:
+          (data['lastSubmittedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 }

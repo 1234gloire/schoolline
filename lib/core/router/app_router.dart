@@ -1,12 +1,16 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/user_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/biometric_lock_provider.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/register_screen.dart';
+import '../../features/auth/screens/biometric_unlock_screen.dart';
+import '../../features/auth/screens/verify_email_screen.dart';
 import '../../features/dashboard/screens/dashboard_screen.dart';
 import '../../features/profile/screens/change_password_screen.dart';
 import '../../features/profile/screens/edit_profile_screen.dart';
@@ -17,12 +21,16 @@ import '../../features/submission/screens/submission_screen.dart';
 import '../../features/results/screens/results_screen.dart';
 import '../../features/results/screens/result_detail_screen.dart';
 import '../../features/payment/screens/payment_screen.dart';
+import '../../features/sessions/screens/request_on_demand_session_screen.dart';
+import '../../features/sessions/screens/session_ranking_screen.dart';
 
 // Routes nommées
 class AppRoutes {
   static const splash = '/';
   static const login = '/login';
   static const register = '/register';
+  static const verifyEmail = '/verify-email';
+  static const unlock = '/unlock';
   static const dashboard = '/dashboard';
   static const editProfile = '/profile/edit';
   static const changePassword = '/profile/password';
@@ -34,8 +42,13 @@ class AppRoutes {
   static const results = '/results';
   static const resultDetail = '/results/:submissionId';
   static const payment = '/payment/:sessionId';
+  static const requestOnDemandSession = '/sessions/request';
+  static const sessionRanking = '/sessions/:sessionId/ranking';
 
   static String planningSessionPath(String sessionId) => '/planning/$sessionId';
+
+  static String sessionRankingPath(String sessionId) =>
+      '/sessions/$sessionId/ranking';
 
   static String examPath({
     required String sessionId,
@@ -72,6 +85,10 @@ class _AuthNotifier extends ChangeNotifier {
       splashReadyProvider,
       (_, __) => notifyListeners(),
     );
+    _ref.listen<BiometricLockState>(
+      biometricLockProvider,
+      (_, __) => notifyListeners(),
+    );
   }
   final Ref _ref;
 }
@@ -94,6 +111,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       final onSplash = location == AppRoutes.splash;
       final onPublicAuthScreen =
           location == AppRoutes.login || location == AppRoutes.register;
+      final onVerifyEmail = location == AppRoutes.verifyEmail;
+      final onUnlock = location == AppRoutes.unlock;
+      final biometricLock = ref.read(biometricLockProvider);
+      final currentFirebaseUser =
+          sessionState.asData?.value ?? ref.read(firebaseAuthProvider).currentUser;
+      final needsEmailVerification =
+          _requiresEmailVerification(currentFirebaseUser);
 
       // Rester sur splash tant que l'auth charge OU que l'animation n'est pas finie
       if (isLoading || (onSplash && !splashReady)) {
@@ -102,6 +126,10 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       // Session rétablie → sortir des écrans publics
       if (isAuthenticated && (onSplash || onPublicAuthScreen)) {
+        if (needsEmailVerification) return AppRoutes.verifyEmail;
+        if (biometricLock.enabled && biometricLock.locked) {
+          return AppRoutes.unlock;
+        }
         return AppRoutes.dashboard;
       }
 
@@ -110,6 +138,25 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       // Non authentifié + écran protégé → login
       if (!isAuthenticated && !onPublicAuthScreen) return AppRoutes.login;
+
+      if (isAuthenticated && needsEmailVerification && !onVerifyEmail) {
+        return AppRoutes.verifyEmail;
+      }
+
+      if (isAuthenticated && onVerifyEmail && !needsEmailVerification) {
+        return AppRoutes.dashboard;
+      }
+
+      if (isAuthenticated &&
+          biometricLock.enabled &&
+          biometricLock.locked &&
+          !onUnlock) {
+        return AppRoutes.unlock;
+      }
+
+      if (isAuthenticated && onUnlock && !biometricLock.locked) {
+        return AppRoutes.dashboard;
+      }
 
       return null;
     },
@@ -128,6 +175,18 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.register,
         pageBuilder:
             (context, state) => _slideTransition(state, const RegisterScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.verifyEmail,
+        pageBuilder:
+            (context, state) =>
+                _fadeTransition(state, const VerifyEmailScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.unlock,
+        pageBuilder:
+            (context, state) =>
+                _fadeTransition(state, const BiometricUnlockScreen()),
       ),
       GoRoute(
         path: AppRoutes.dashboard,
@@ -228,6 +287,23 @@ final routerProvider = Provider<GoRouter>((ref) {
           );
         },
       ),
+      GoRoute(
+        path: AppRoutes.requestOnDemandSession,
+        pageBuilder: (context, state) => _slideTransition(
+          state,
+          const RequestOnDemandSessionScreen(),
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.sessionRanking,
+        pageBuilder: (context, state) {
+          final sessionId = state.pathParameters['sessionId']!;
+          return _slideTransition(
+            state,
+            SessionRankingScreen(sessionId: sessionId),
+          );
+        },
+      ),
     ],
     errorBuilder:
         (context, state) => Scaffold(
@@ -235,6 +311,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
   );
 });
+
+bool _requiresEmailVerification(User? user) {
+  if (user == null || user.emailVerified) return false;
+  return user.providerData.any((info) => info.providerId == 'password');
+}
 
 Map<String, dynamic>? _readExtraMap(Object? extra) {
   if (extra is Map<String, dynamic>) {
@@ -266,44 +347,12 @@ CustomTransitionPage<void> _fadeTransition(GoRouterState state, Widget child) {
   );
 }
 
-/// Transition push pour les écrans enfant (profil, exam, résultats…)
-/// Slide depuis la droite + fondu en entrée, recul léger à la sortie.
-CustomTransitionPage<void> _slideTransition(GoRouterState state, Widget child) {
-  return CustomTransitionPage<void>(
+/// Transition push pour les écrans enfant (profil, exam, résultats…).
+/// Utilise CupertinoPage pour obtenir le swipe-back natif (bord gauche → droite)
+/// sur iOS ET Android, tout en gardant le slide horizontal standard.
+Page<void> _slideTransition(GoRouterState state, Widget child) {
+  return CupertinoPage<void>(
     key: state.pageKey,
     child: child,
-    transitionDuration: const Duration(milliseconds: 340),
-    reverseTransitionDuration: const Duration(milliseconds: 280),
-    transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      // Entrée : slide depuis droite
-      final enterSlide = Tween<Offset>(
-        begin: const Offset(1.0, 0.0),
-        end: Offset.zero,
-      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
-
-      // Entrée : fondu rapide sur la première moitié
-      final enterFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-        CurvedAnimation(
-          parent: animation,
-          curve: const Interval(0.0, 0.45, curve: Curves.easeOut),
-        ),
-      );
-
-      // Sortie : l'écran précédent recule légèrement sur la gauche
-      final exitSlide = Tween<Offset>(
-        begin: Offset.zero,
-        end: const Offset(-0.28, 0.0),
-      ).animate(
-        CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeInCubic),
-      );
-
-      return SlideTransition(
-        position: exitSlide,
-        child: SlideTransition(
-          position: enterSlide,
-          child: FadeTransition(opacity: enterFade, child: child),
-        ),
-      );
-    },
   );
 }

@@ -63,6 +63,7 @@ function UsersContent() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
   const [togglingBlockId, setTogglingBlockId] = useState<string | null>(null);
 
@@ -326,21 +327,31 @@ function UsersContent() {
                         })}
                       </TableCell>
                       <TableCell className="align-top">
-                        {user.role === 'student' && user.uid !== profile?.uid && (
+                        <div className="flex flex-col gap-1.5">
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={togglingBlockId === user.uid}
-                            onClick={() => handleToggleBlock(user)}
-                            className={
-                              user.blocked
-                                ? 'border-green-200 text-green-700 hover:bg-green-50'
-                                : 'border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700'
-                            }
+                            onClick={() => setSelectedProfile(user)}
+                            className="border-slate-200 text-slate-600 hover:bg-slate-50"
                           >
-                            {togglingBlockId === user.uid ? '...' : user.blocked ? 'Débloquer' : 'Bloquer'}
+                            Voir le profil
                           </Button>
-                        )}
+                          {(user.role === 'student' || user.role === 'corrector') && user.uid !== profile?.uid && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={togglingBlockId === user.uid}
+                              onClick={() => handleToggleBlock(user)}
+                              className={
+                                user.blocked
+                                  ? 'border-green-200 text-green-700 hover:bg-green-50'
+                                  : 'border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700'
+                              }
+                            >
+                              {togglingBlockId === user.uid ? '...' : user.blocked ? 'Débloquer' : 'Bloquer'}
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -350,6 +361,81 @@ function UsersContent() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Modal profil utilisateur */}
+      <Dialog open={selectedProfile !== null} onOpenChange={(open) => { if (!open) setSelectedProfile(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span>{selectedProfile?.displayName}</span>
+              {selectedProfile && <RoleBadge role={selectedProfile.role} />}
+              {selectedProfile?.blocked && (
+                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Bloqué</span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedProfile && (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <span className="text-gray-500">Email</span>
+                <span className="font-medium">{selectedProfile.email || '—'}</span>
+                <span className="text-gray-500">Téléphone</span>
+                <span className="font-medium">{selectedProfile.phone || '—'}</span>
+                <span className="text-gray-500">Créé le</span>
+                <span className="font-medium">
+                  {selectedProfile.createdAt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                </span>
+                {selectedProfile.role === 'corrector' && (
+                  <>
+                    <span className="text-gray-500">Copies actives</span>
+                    <span className="font-medium text-blue-700">{selectedProfile.activeCorrections ?? 0}</span>
+                  </>
+                )}
+                {selectedProfile.role === 'student' && (
+                  <>
+                    <span className="text-gray-500">École</span>
+                    <span className="font-medium">{selectedProfile.school || '—'}</span>
+                    <span className="text-gray-500">Classe</span>
+                    <span className="font-medium">
+                      {selectedProfile.class ?? '—'}{selectedProfile.series ? ` · Série ${selectedProfile.series}` : ''}
+                    </span>
+                  </>
+                )}
+                <span className="text-gray-500">UID</span>
+                <span className="font-mono text-xs text-gray-400 break-all">{selectedProfile.uid}</span>
+              </div>
+
+              {(selectedProfile.role === 'student' || selectedProfile.role === 'corrector') &&
+                selectedProfile.uid !== profile?.uid && (
+                  <div className="flex justify-end border-t pt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={togglingBlockId === selectedProfile.uid}
+                      onClick={() => {
+                        handleToggleBlock(selectedProfile);
+                        setSelectedProfile((prev) =>
+                          prev ? { ...prev, blocked: !prev.blocked } : null
+                        );
+                      }}
+                      className={
+                        selectedProfile.blocked
+                          ? 'border-green-200 text-green-700 hover:bg-green-50'
+                          : 'border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700'
+                      }
+                    >
+                      {togglingBlockId === selectedProfile.uid
+                        ? '...'
+                        : selectedProfile.blocked
+                        ? 'Débloquer ce compte'
+                        : 'Bloquer ce compte'}
+                    </Button>
+                  </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">

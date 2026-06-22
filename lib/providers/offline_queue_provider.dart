@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/constants/app_constants.dart';
@@ -55,6 +56,8 @@ class OfflineQueueNotifier extends StateNotifier<List<QueuedSubmission>> {
   }
 
   /// Ajoute une soumission en attente d'upload dans la queue Hive.
+  /// Les fichiers sont copiés vers le répertoire documents (persistant entre
+  /// relances et réinstallations de l'app, contrairement au cache temporaire).
   Future<String> enqueue({
     required String sessionId,
     required String subjectId,
@@ -62,18 +65,51 @@ class OfflineQueueNotifier extends StateNotifier<List<QueuedSubmission>> {
     required List<String> pagePaths,
   }) async {
     final id = const Uuid().v4();
+    final persistentPaths = await _copyToPersistentStorage(id, pagePaths);
     final item = QueuedSubmission(
       id: id,
       sessionId: sessionId,
       subjectId: subjectId,
       subjectName: subjectName,
-      pagePaths: pagePaths,
+      pagePaths: persistentPaths,
       queuedAt: DateTime.now(),
     );
     await _box.put(id, item.toJsonString());
     state = [...state, item];
     AppLogger.info('OfflineQueue', 'Soumission mise en queue: $subjectName ($id)');
     return id;
+  }
+
+  /// Copie les pages vers `documents/offline_queue/{id}/` pour garantir leur
+  /// persistance même si le cache système est vidé.
+  Future<List<String>> _copyToPersistentStorage(
+    String queueId,
+    List<String> pagePaths,
+  ) async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final destDir = Directory('${docDir.path}/offline_queue/$queueId');
+      await destDir.create(recursive: true);
+
+      final persistent = <String>[];
+      for (var i = 0; i < pagePaths.length; i++) {
+        final src = File(pagePaths[i]);
+        final ext = pagePaths[i].split('.').last.toLowerCase();
+        final dest = File(
+          '${destDir.path}/page_${(i + 1).toString().padLeft(3, '0')}.$ext',
+        );
+        if (await src.exists()) {
+          await src.copy(dest.path);
+          persistent.add(dest.path);
+        } else {
+          persistent.add(pagePaths[i]);
+        }
+      }
+      return persistent;
+    } catch (e) {
+      AppLogger.warn('OfflineQueue', 'Copie persistante échouée, chemins originaux conservés: $e');
+      return pagePaths;
+    }
   }
 
   /// Tente d'uploader toutes les soumissions en attente.
@@ -184,6 +220,12 @@ class OfflineQueueNotifier extends StateNotifier<List<QueuedSubmission>> {
   Future<void> _removeFromQueue(String id) async {
     await _box.delete(id);
     state = state.where((s) => s.id != id).toList();
+    // Nettoie les fichiers copiés dans le stockage persistant.
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final dir = Directory('${docDir.path}/offline_queue/$id');
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
   }
 
   String _fileExtension(String path) {

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -47,6 +49,67 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _forgotPassword() async {
+    final email = _emailCtrl.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Saisis ton email ci-dessus avant de réinitialiser.'),
+        ),
+      );
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      await ref.read(authNotifierProvider.notifier).sendPasswordResetEmail(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Email de réinitialisation envoyé à $email.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(authErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loginWithGoogle() async {
+    FocusScope.of(context).unfocus();
+    setState(() => _isLoading = true);
+    try {
+      await ref.read(authNotifierProvider.notifier).signInWithGoogle();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(authErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loginWithApple() async {
+    FocusScope.of(context).unfocus();
+    setState(() => _isLoading = true);
+    try {
+      await ref.read(authNotifierProvider.notifier).signInWithApple();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(authErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -57,6 +120,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+              final logoWidth = (constraints.maxWidth * 0.62).clamp(220.0, 300.0);
               return SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(24, 24, 24, bottomInset + 24),
                 child: ConstrainedBox(
@@ -64,40 +128,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Logo + titre
-                      Container(
-                        width: 88,
-                        height: 88,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(25),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: AppColors.accent, width: 2.5),
-                        ),
-                        child: const Icon(
-                          Icons.school_rounded,
-                          color: AppColors.accent,
-                          size: 46,
-                        ),
+                      // Le PNG contient deja le nom de la marque: on affiche
+                      // uniquement le logo pour eviter le doublon visuel.
+                      Image.asset(
+                        'assets/images/logo_diakexam.png',
+                        width: logoWidth,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
                       ),
-                      const SizedBox(height: 20),
-                      Text(
-                        'ExamSim Congo',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 16),
                       Text(
                         'Prépare ton BAC en conditions réelles',
                         style: TextStyle(
                           color: Colors.white.withAlpha(180),
-                          fontSize: 13,
+                          fontSize: 14,
                         ),
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 34),
 
                       // Carte formulaire
                       Container(
@@ -183,25 +231,70 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 onFieldSubmitted: (_) => _login(),
                               ),
 
-                              const SizedBox(height: 28),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton(
+                                  onPressed: _isLoading ? null : _forgotPassword,
+                                  child: const Text('Mot de passe oublié ?'),
+                                ),
+                              ),
+
+                              const SizedBox(height: 4),
 
                               SizedBox(
                                 width: double.infinity,
                                 height: 52,
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _login,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.primary,
+                                    foregroundColor: Colors.white,
+                                  ),
                                   child: _isLoading
                                       ? const SizedBox(
                                           width: 22,
                                           height: 22,
                                           child: CircularProgressIndicator(
-                                            strokeWidth: 2.5,
-                                            color: AppColors.primary,
+                                            strokeWidth: 2,
+                                            color: Colors.white,
                                           ),
                                         )
-                                      : Text('Se connecter'),
+                                      : const Text('Se connecter'),
                                 ),
                               ),
+                              const SizedBox(height: 12),
+
+                              SizedBox(
+                                width: double.infinity,
+                                height: 52,
+                                child: OutlinedButton.icon(
+                                  onPressed: _isLoading ? null : _loginWithGoogle,
+                                  style: OutlinedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: Colors.black87,
+                                    side: const BorderSide(color: Color(0xFFDADCE0)),
+                                  ),
+                                  icon: const Icon(Icons.g_mobiledata, size: 24),
+                                  label: const Text('Continuer avec Google'),
+                                ),
+                              ),
+                              if (Platform.isIOS) ...[
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 52,
+                                  child: OutlinedButton.icon(
+                                    onPressed: _isLoading ? null : _loginWithApple,
+                                    style: OutlinedButton.styleFrom(
+                                      backgroundColor: Colors.black,
+                                      foregroundColor: Colors.white,
+                                      side: const BorderSide(color: Colors.black),
+                                    ),
+                                    icon: const Icon(Icons.apple, size: 22),
+                                    label: const Text('Continuer avec Apple'),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -221,7 +314,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 style:
                                     TextStyle(color: Colors.white.withAlpha(180)),
                               ),
-                              Text(
+                              const Text(
                                 'CRÉER MON COMPTE ÉLÈVE',
                                 style: TextStyle(
                                   color: AppColors.accent,
@@ -237,7 +330,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       const SizedBox(height: 12),
 
                       Text(
-                        'ExamSim Congo v1.0 — Congo Brazzaville',
+                        'DiakExam v1.0 — Congo Brazzaville',
                         style: TextStyle(
                           color: Colors.white.withAlpha(100),
                           fontSize: 11,

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/exam_sim_palette.dart';
@@ -12,6 +13,8 @@ import '../../../models/submission_model.dart';
 import '../../../models/subject_model.dart';
 import '../../../models/user_model.dart';
 import '../../../providers/auth_provider.dart';
+import '../../../providers/biometric_lock_provider.dart';
+import '../../../providers/notification_settings_provider.dart';
 import '../../../providers/offline_queue_provider.dart';
 import '../../../providers/sessions_provider.dart';
 import '../../../providers/theme_mode_provider.dart';
@@ -33,12 +36,59 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void initState() {
     super.initState();
     _pageController = PageController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybePromptNotifications();
+    });
   }
 
   @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
+  }
+
+  /// Au premier lancement (permission encore non déterminée), propose
+  /// d'activer les notifications avec une explication, puis déclenche la
+  /// vraie demande système.
+  Future<void> _maybePromptNotifications() async {
+    final notifier = ref.read(notificationSettingsProvider.notifier);
+    if (notifier.promptAlreadyShown) return;
+
+    final settings = await ref.read(notificationSettingsProvider.future);
+    if (!mounted) return;
+
+    // Décision déjà prise par l'utilisateur (accordé/refusé) → ne pas reproposer.
+    if (settings.osStatus != AuthorizationStatus.notDetermined) {
+      notifier.markPromptShown();
+      return;
+    }
+
+    notifier.markPromptShown();
+
+    final accept = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Activer les notifications ?'),
+        content: const Text(
+          "Reçois les rappels d'épreuves, la validation de tes paiements, "
+          "la publication de tes résultats et les annonces de l'administration.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Plus tard'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Activer'),
+          ),
+        ],
+      ),
+    );
+
+    if (accept == true) {
+      await notifier.enable();
+    }
   }
 
   void _onTabTapped(int index) {
@@ -166,80 +216,95 @@ class _HomeTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: context.palette.background,
-      body: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Header sombre ──
-            _EntranceMotion(
-              beginOffset: const Offset(0, -22),
-              child: _DashboardHeader(user: user),
-            ),
+      body: RefreshIndicator(
+        color: AppColors.primary,
+        onRefresh: () async {
+          // Ré-abonne tous les flux de l'accueil (sessions, épreuves,
+          // soumissions, résultats et classement).
+          ref.invalidate(activeSessionsProvider);
+          ref.invalidate(sessionsProvider);
+          ref.invalidate(subjectsProvider);
+          ref.invalidate(mySubmissionsProvider);
+          ref.invalidate(studentResultProvider);
+          ref.invalidate(studentRankingProvider);
+          // Laisse le temps aux flux de se ré-abonner pour un retour visible.
+          await Future.delayed(const Duration(milliseconds: 500));
+        },
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Header sombre ──
+              _EntranceMotion(
+                beginOffset: const Offset(0, -22),
+                child: _DashboardHeader(user: user),
+              ),
 
-            // ── Bloc stats + classement (padded) ──
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (user case final currentUser?) ...[
-                    if (!currentUser.isProfileComplete) ...[
-                      _EntranceMotion(
-                        delay: const Duration(milliseconds: 60),
-                        child: _ProfileIncompleteBanner(user: currentUser),
-                      ),
-                      const SizedBox(height: 16),
+              // ── Bloc stats + classement (padded) ──
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (user case final currentUser?) ...[
+                      if (!currentUser.isProfileComplete) ...[
+                        _EntranceMotion(
+                          delay: const Duration(milliseconds: 60),
+                          child: _ProfileIncompleteBanner(user: currentUser),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                     ],
-                  ],
-                  _EntranceMotion(
-                    delay: const Duration(milliseconds: 110),
-                    child: _StatsRow(userId: user?.uid),
-                  ),
-                  const SizedBox(height: 12),
-                  const _EntranceMotion(
-                    delay: Duration(milliseconds: 150),
-                    child: _PendingUploadsBanner(),
-                  ),
-                  _EntranceMotion(
-                    delay: const Duration(milliseconds: 190),
-                    child: _RankingCard(user: user),
-                  ),
-                  const SizedBox(height: 24),
-                  // Label sessions
-                  _EntranceMotion(
-                    delay: const Duration(milliseconds: 220),
-                    child: Text(
-                      'Sessions disponibles',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: context.palette.textPrimary,
+                    _EntranceMotion(
+                      delay: const Duration(milliseconds: 110),
+                      child: _StatsRow(userId: user?.uid),
+                    ),
+                    const SizedBox(height: 12),
+                    const _EntranceMotion(
+                      delay: Duration(milliseconds: 150),
+                      child: _PendingUploadsBanner(),
+                    ),
+                    _EntranceMotion(
+                      delay: const Duration(milliseconds: 190),
+                      child: _RankingCard(user: user),
+                    ),
+                    const SizedBox(height: 24),
+                    // Label sessions
+                    _EntranceMotion(
+                      delay: const Duration(milliseconds: 220),
+                      child: Text(
+                        'Sessions disponibles',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: context.palette.textPrimary,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
 
-            // ── Sessions carousel horizontal (pleine largeur) ──
-            const SizedBox(height: 12),
-            const _EntranceMotion(
-              delay: Duration(milliseconds: 250),
-              child: _SessionsSection(),
-            ),
-            const SizedBox(height: 24),
-
-            // ── Épreuves (padded) ──
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _EntranceMotion(
-                delay: const Duration(milliseconds: 300),
-                child: _SubjectsSection(user: user),
+              // ── Sessions carousel horizontal (pleine largeur) ──
+              const SizedBox(height: 12),
+              const _EntranceMotion(
+                delay: Duration(milliseconds: 250),
+                child: _SessionsSection(),
               ),
-            ),
-            const SizedBox(height: 80),
-          ],
+              const SizedBox(height: 24),
+
+              // ── Épreuves (padded) ──
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _EntranceMotion(
+                  delay: const Duration(milliseconds: 300),
+                  child: _SubjectsSection(user: user),
+                ),
+              ),
+              const SizedBox(height: 80),
+            ],
+          ),
         ),
       ),
     );
@@ -330,10 +395,7 @@ class _DashboardHeader extends ConsumerWidget {
 
           // Focus global sur toutes les sessions ouvertes / en cours
           if (sessionsAsync.isLoading)
-            Padding(
-              padding: EdgeInsets.only(top: 16),
-              child: _HeaderSkeleton(),
-            )
+            Padding(padding: EdgeInsets.only(top: 16), child: _HeaderSkeleton())
           else if (sessions.isNotEmpty) ...[
             const SizedBox(height: 16),
             _HeaderSessionsCarousel(sessions: sessions),
@@ -378,9 +440,8 @@ class _NotificationsButton extends StatelessWidget {
         decoration: BoxDecoration(
           color: isDark ? gold.withAlpha(32) : Colors.white.withAlpha(22),
           shape: BoxShape.circle,
-          border: isDark
-              ? Border.all(color: gold.withAlpha(80), width: 1)
-              : null,
+          border:
+              isDark ? Border.all(color: gold.withAlpha(80), width: 1) : null,
         ),
         child: Icon(
           Icons.notifications_outlined,
@@ -436,9 +497,8 @@ class _ThemeToggleButton extends ConsumerWidget {
           decoration: BoxDecoration(
             color: isDark ? gold.withAlpha(32) : Colors.white.withAlpha(22),
             shape: BoxShape.circle,
-            border: isDark
-                ? Border.all(color: gold.withAlpha(80), width: 1)
-                : null,
+            border:
+                isDark ? Border.all(color: gold.withAlpha(80), width: 1) : null,
           ),
           child: Icon(icon, color: isDark ? gold : Colors.white, size: 20),
         ),
@@ -604,24 +664,43 @@ class _NotificationsSheetState extends State<_NotificationsSheet> {
                     ),
                   ),
                 if (!isAuthorized) const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: widget.onOpenPlanning,
-                        icon: const Icon(Icons.calendar_month_outlined),
-                        label: Text('Planning'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: widget.onOpenResults,
-                        icon: const Icon(Icons.check_circle_outline),
-                        label: Text('Résultats'),
-                      ),
-                    ),
-                  ],
+                Builder(
+                  builder: (context) {
+                    const gold = Color(0xFFF5B731);
+                    final isDark =
+                        Theme.of(context).brightness == Brightness.dark;
+                    final btnStyle =
+                        isDark
+                            ? OutlinedButton.styleFrom(
+                              foregroundColor: gold,
+                              side: BorderSide(
+                                color: gold.withAlpha(160),
+                                width: 1.2,
+                              ),
+                            )
+                            : null;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: widget.onOpenPlanning,
+                            style: btnStyle,
+                            icon: const Icon(Icons.calendar_month_outlined),
+                            label: const Text('Planning'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: widget.onOpenResults,
+                            style: btnStyle,
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: const Text('Résultats'),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             );
@@ -656,7 +735,8 @@ class _NotificationInfoRow extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(10),
+            color:
+                isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(10),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(icon, size: 18, color: iconColor),
@@ -1071,28 +1151,35 @@ class _HeaderSessionCard extends ConsumerWidget {
               ),
             ),
             const SizedBox(width: 10),
-            Builder(builder: (context) {
-              const gold = Color(0xFFF5B731);
-              final isDark = Theme.of(context).brightness == Brightness.dark;
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                decoration: BoxDecoration(
-                  color: isDark ? gold.withAlpha(28) : context.palette.surface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: isDark
-                      ? Border.all(color: gold.withAlpha(80), width: 1)
-                      : null,
-                ),
-                child: Text(
-                  'Planning',
-                  style: TextStyle(
-                    color: isDark ? gold : AppColors.primary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+            Builder(
+              builder: (context) {
+                const gold = Color(0xFFF5B731);
+                final isDark = Theme.of(context).brightness == Brightness.dark;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
                   ),
-                ),
-              );
-            }),
+                  decoration: BoxDecoration(
+                    color:
+                        isDark ? gold.withAlpha(28) : context.palette.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border:
+                        isDark
+                            ? Border.all(color: gold.withAlpha(80), width: 1)
+                            : null,
+                  ),
+                  child: Text(
+                    'Planning',
+                    style: TextStyle(
+                      color: isDark ? gold : AppColors.primary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -1291,7 +1378,10 @@ class _SessionsSection extends ConsumerWidget {
           ),
           child: Text(
             'Aucune session disponible pour le moment.',
-            style: TextStyle(color: context.palette.textSecondary, fontSize: 13),
+            style: TextStyle(
+              color: context.palette.textSecondary,
+              fontSize: 13,
+            ),
             textAlign: TextAlign.center,
           ),
         ),
@@ -1336,7 +1426,9 @@ class _SessionCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color:
-                isActive ? AppColors.primary.withAlpha(60) : context.palette.divider,
+                isActive
+                    ? AppColors.primary.withAlpha(60)
+                    : context.palette.divider,
           ),
           boxShadow: [
             BoxShadow(
@@ -1471,13 +1563,13 @@ class _SessionStatusBadge extends StatelessWidget {
         return _badge(
           'EN COURS',
           const Color(0xFF16A34A),
-          const Color(0xFFDCFCE7),
+          const Color(0xFF16A34A).withAlpha(22),
         );
       case SessionStatus.open:
         return _badge(
           'OUVERTE',
           const Color(0xFF2563EB),
-          const Color(0xFFDBEAFE),
+          const Color(0xFF2563EB).withAlpha(22),
         );
       case SessionStatus.closed:
         return _badge(
@@ -1489,7 +1581,7 @@ class _SessionStatusBadge extends StatelessWidget {
         return _badge(
           'RÉSULTATS',
           const Color(0xFF7C3AED),
-          const Color(0xFFEDE9FE),
+          const Color(0xFF7C3AED).withAlpha(22),
         );
       default:
         return const SizedBox.shrink();
@@ -1944,7 +2036,8 @@ class _SubjectBadgeCard extends StatelessWidget {
                       ? Icons.lock_outline
                       : Icons.access_time,
                   size: 16,
-                  color: isAbandoned ? AppColors.error : context.palette.textHint,
+                  color:
+                      isAbandoned ? AppColors.error : context.palette.textHint,
                 ),
                 label: Text(
                   isAbandoned
@@ -2018,10 +2111,10 @@ class _StatusBadge extends StatelessWidget {
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: const Color(0xFFFFEDD5),
+            color: const Color(0xFFEA580C).withAlpha(30),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: Text(
+          child: const Text(
             'URGENT',
             style: TextStyle(
               color: Color(0xFFEA580C),
@@ -2140,7 +2233,10 @@ class _AllDoneCard extends StatelessWidget {
           SizedBox(height: 4),
           Text(
             'Tes résultats seront publiés prochainement',
-            style: TextStyle(fontSize: 13, color: context.palette.textSecondary),
+            style: TextStyle(
+              fontSize: 13,
+              color: context.palette.textSecondary,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -2191,20 +2287,22 @@ class _ProfileIncompleteBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const amber = Color(0xFFF59E0B);
+    final textColor = isDark ? amber : const Color(0xFF92400E);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
+        color: amber.withAlpha(isDark ? 25 : 18),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFCD34D), width: 1.5),
+        border: Border.all(
+          color: amber.withAlpha(isDark ? 80 : 120),
+          width: 1.5,
+        ),
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: Color(0xFFF59E0B),
-            size: 22,
-          ),
+          Icon(Icons.warning_amber_rounded, color: amber, size: 22),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -2215,15 +2313,12 @@ class _ProfileIncompleteBanner extends StatelessWidget {
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
-                    color: Color(0xFF92400E),
+                    color: textColor,
                   ),
                 ),
                 Text(
                   _message(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF92400E),
-                  ),
+                  style: TextStyle(fontSize: 12, color: textColor),
                 ),
               ],
             ),
@@ -2232,10 +2327,10 @@ class _ProfileIncompleteBanner extends StatelessWidget {
             onPressed: () => context.push(AppRoutes.editProfile),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              foregroundColor: const Color(0xFFF59E0B),
+              foregroundColor: amber,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(
+            child: const Text(
               'Compléter',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
@@ -2278,6 +2373,8 @@ class _ProfileTab extends ConsumerStatefulWidget {
 class _ProfileTabState extends ConsumerState<_ProfileTab>
     with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
+  bool _isDeletingAccount = false;
+  bool _notifBusy = false;
 
   // Chaque section entre avec un délai décalé
   late List<Animation<double>> _fades;
@@ -2370,6 +2467,91 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
     }
   }
 
+  Future<void> _confirmDeleteAccount(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    var canDelete = false;
+
+    final shouldDelete =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder:
+              (dialogContext) => StatefulBuilder(
+                builder:
+                    (dialogContext, setDialogState) => AlertDialog(
+                      title: const Text('Supprimer le compte'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Cette action va supprimer ton accès au compte et anonymiser ton profil. Tes anciens paiements/résultats peuvent rester conservés pour le suivi administratif.',
+                          ),
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Tape SUPPRIMER pour confirmer.',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            autofocus: true,
+                            textCapitalization: TextCapitalization.characters,
+                            decoration: const InputDecoration(
+                              hintText: 'SUPPRIMER',
+                            ),
+                            onChanged: (value) {
+                              setDialogState(
+                                () => canDelete = value.trim() == 'SUPPRIMER',
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('Annuler'),
+                        ),
+                        ElevatedButton(
+                          onPressed:
+                              canDelete
+                                  ? () => Navigator.pop(dialogContext, true)
+                                  : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Supprimer'),
+                        ),
+                      ],
+                    ),
+              ),
+        ) ??
+        false;
+
+    if (!shouldDelete || !context.mounted) return;
+
+    setState(() => _isDeletingAccount = true);
+    try {
+      await ref.read(authNotifierProvider.notifier).deleteMyAccount();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Compte supprimé.')));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(authErrorMessage(error))));
+    } finally {
+      if (mounted) {
+        setState(() => _isDeletingAccount = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = widget.user;
@@ -2422,10 +2604,7 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
                 Text(
                   _userDisplayName(widget.user),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 Text(
                   _userAcademicLabel(widget.user),
@@ -2448,6 +2627,14 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _sectionTitle('Compte et sécurité'),
+                  if (profile.isStudent)
+                    _profileActionTile(
+                      icon: Icons.add_circle_outline_rounded,
+                      title: 'Demander une session à la demande',
+                      subtitle:
+                          'Choisis tes dates, 1500 FCFA, composée par l\'administration.',
+                      onTap: () => handleRequestOnDemandTap(context, profile),
+                    ),
                   _profileActionTile(
                     icon: Icons.edit_outlined,
                     title: 'Modifier mes informations',
@@ -2460,6 +2647,8 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
                     subtitle: 'Mets à jour l\'accès à ton compte.',
                     onTap: () => context.push(AppRoutes.changePassword),
                   ),
+                  _biometricLockTile(),
+                  _notificationsTile(),
                   _profileActionTile(
                     icon: Icons.gavel_outlined,
                     title: 'Mentions légales',
@@ -2546,21 +2735,57 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
 
           _animated(
             5,
-            OutlinedButton.icon(
-              onPressed: () => _confirmSignOut(context, ref),
-              icon: const Icon(Icons.logout),
-              label: Text('Se déconnecter'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.error,
-                side: const BorderSide(color: AppColors.error),
-              ),
+            Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _confirmSignOut(context, ref),
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Se déconnecter'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.error,
+                      side: const BorderSide(color: AppColors.error),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton.icon(
+                    onPressed:
+                        _isDeletingAccount
+                            ? null
+                            : () => _confirmDeleteAccount(context, ref),
+                    icon:
+                        _isDeletingAccount
+                            ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : const Icon(Icons.delete_forever_outlined),
+                    label: Text(
+                      _isDeletingAccount
+                          ? 'Suppression en cours...'
+                          : 'Supprimer mon compte',
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.error,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),
           Center(
             child: Text(
               '${AppConstants.appName} ${AppConstants.appVersion}',
-              style: TextStyle(fontSize: 12, color: context.palette.textSecondary),
+              style: TextStyle(
+                fontSize: 12,
+                color: context.palette.textSecondary,
+              ),
             ),
           ),
         ],
@@ -2717,7 +2942,8 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(12),
+            color:
+                isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(12),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(icon, color: iconColor, size: 20),
@@ -2744,6 +2970,174 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
         onTap: onTap,
       ),
     );
+  }
+
+  Widget _biometricLockTile() {
+    final lock = ref.watch(biometricLockProvider);
+    const gold = Color(0xFFF5B731);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor = isDark ? gold : AppColors.primary;
+    final subtitle =
+        lock.supported
+            ? 'Demande Face ID ou empreinte quand tu reviens dans l\'app.'
+            : 'Configure Face ID ou empreinte sur ton téléphone pour l\'activer.';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: context.palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: context.palette.divider),
+      ),
+      child: SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        value: lock.enabled,
+        onChanged:
+            lock.checking || lock.authenticating
+                ? null
+                : (value) async {
+                  await ref
+                      .read(biometricLockProvider.notifier)
+                      .setEnabled(value);
+                  final error = ref.read(biometricLockProvider).errorMessage;
+                  if (!mounted || error == null) return;
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error)));
+                },
+        secondary: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color:
+                isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(Icons.fingerprint_rounded, color: iconColor, size: 20),
+        ),
+        title: const Text(
+          'Déverrouillage biométrique',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 12,
+              color: context.palette.textSecondary,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _notificationsTile() {
+    final asyncSettings = ref.watch(notificationSettingsProvider);
+    final settings = asyncSettings.value;
+    const gold = Color(0xFFF5B731);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor = isDark ? gold : AppColors.primary;
+
+    final enabled = settings?.enabled ?? false;
+    final osBlocked = settings?.osBlocked ?? false;
+    final subtitle =
+        osBlocked && !enabled
+            ? 'Bloquées dans les réglages du téléphone. Touche pour les réactiver.'
+            : enabled
+            ? 'Rappels d\'épreuves, paiements, résultats et annonces.'
+            : 'Active pour recevoir rappels, résultats et annonces.';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: context.palette.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: context.palette.divider),
+      ),
+      child: SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        value: enabled,
+        onChanged:
+            (_notifBusy || asyncSettings.isLoading)
+                ? null
+                : (value) => _toggleNotifications(value),
+        secondary: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color:
+                isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            Icons.notifications_active_outlined,
+            color: iconColor,
+            size: 20,
+          ),
+        ),
+        title: const Text(
+          'Notifications',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 12,
+              color: context.palette.textSecondary,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleNotifications(bool value) async {
+    setState(() => _notifBusy = true);
+    final notifier = ref.read(notificationSettingsProvider.notifier);
+    try {
+      if (value) {
+        final ok = await notifier.enable();
+        if (!ok && mounted) {
+          await _showOpenNotifSettingsDialog();
+        }
+      } else {
+        await notifier.disable();
+      }
+    } finally {
+      if (mounted) setState(() => _notifBusy = false);
+    }
+  }
+
+  Future<void> _showOpenNotifSettingsDialog() async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Notifications bloquées'),
+        content: const Text(
+          'Les notifications sont désactivées dans les réglages de ton '
+          'téléphone. Ouvre les réglages pour les autoriser.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Plus tard'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Ouvrir les réglages'),
+          ),
+        ],
+      ),
+    );
+    if (go == true) {
+      await openAppSettings();
+    }
   }
 
   Widget _infoTile(
@@ -2780,10 +3174,7 @@ class _ProfileTabState extends ConsumerState<_ProfileTab>
                 ),
                 Text(
                   value.trim().isEmpty ? 'Non renseigné' : value,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                 ),
                 if (helper != null) ...[
                   const SizedBox(height: 4),
@@ -3017,10 +3408,10 @@ class _PendingUploadsBanner extends ConsumerWidget {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED),
+                  color: const Color(0xFFEA580C).withAlpha(25),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: const Color(0xFFFED7AA),
+                    color: const Color(0xFFEA580C).withAlpha(80),
                     width: 1.5,
                   ),
                 ),
@@ -3038,7 +3429,7 @@ class _PendingUploadsBanner extends ConsumerWidget {
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF92400E),
+                          color: context.palette.textPrimary,
                         ),
                       ),
                     ),
@@ -3056,7 +3447,7 @@ class _PendingUploadsBanner extends ConsumerWidget {
                         foregroundColor: const Color(0xFFEA580C),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      child: Text(
+                      child: const Text(
                         'Réessayer',
                         style: TextStyle(
                           fontSize: 12,

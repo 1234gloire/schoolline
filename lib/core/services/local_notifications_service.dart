@@ -162,7 +162,7 @@ const AndroidNotificationChannel _examRemindersChannel =
 const AndroidNotificationChannel _generalUpdatesChannel =
     AndroidNotificationChannel(
       'general_updates',
-      'Mises à jour ExamSim',
+      'Mises à jour DiakExam',
       description:
           'Validation de paiements, résultats publiés et notifications utiles.',
       importance: Importance.high,

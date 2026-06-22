@@ -9,6 +9,8 @@ import 'core/router/app_router.dart';
 import 'core/services/local_notifications_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/exam_sim_palette.dart';
+import 'providers/auth_provider.dart';
+import 'providers/biometric_lock_provider.dart';
 import 'providers/offline_queue_provider.dart';
 import 'providers/theme_mode_provider.dart';
 
@@ -19,13 +21,15 @@ class ExamSimApp extends ConsumerStatefulWidget {
   ConsumerState<ExamSimApp> createState() => _ExamSimAppState();
 }
 
-class _ExamSimAppState extends ConsumerState<ExamSimApp> {
+class _ExamSimAppState extends ConsumerState<ExamSimApp>
+    with WidgetsBindingObserver {
   StreamSubscription<RemoteMessage>? _foregroundSub;
   StreamSubscription<Map<String, dynamic>>? _localNotificationTapSub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupFcm();
     _localNotificationTapSub = LocalNotificationsService.instance.tapStream
         .listen(_handleNotificationNavigation);
@@ -91,9 +95,19 @@ class _ExamSimAppState extends ConsumerState<ExamSimApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _foregroundSub?.cancel();
     _localNotificationTapSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.paused) return;
+    final hasSession = ref.read(firebaseAuthProvider).currentUser != null;
+    if (hasSession) {
+      ref.read(biometricLockProvider.notifier).lock();
+    }
   }
 
   @override
@@ -102,7 +116,7 @@ class _ExamSimAppState extends ConsumerState<ExamSimApp> {
     final mode = ref.watch(themeModeProvider);
 
     return MaterialApp.router(
-      title: 'ExamSim Congo',
+      title: 'DiakExam',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,

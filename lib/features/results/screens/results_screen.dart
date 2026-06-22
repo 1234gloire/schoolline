@@ -94,23 +94,26 @@ class _CorrectingView extends StatelessWidget {
               width: 120,
               height: 120,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFFF3CD), Color(0xFFFFE082)],
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.primary.withAlpha(30),
+                    AppColors.primary.withAlpha(60),
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.accent.withAlpha(60),
+                    color: AppColors.primary.withAlpha(40),
                     blurRadius: 20,
                     offset: const Offset(0, 8),
                   ),
                 ],
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.hourglass_bottom_rounded,
-                color: AppColors.accentDark,
+                color: AppColors.primary,
                 size: 60,
               ),
             ),
@@ -226,35 +229,14 @@ class _CorrectionSteps extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ocrCompleted =
-        submission.ocrCompletedAt != null ||
-        {
-          SubmissionStatus.ocrDone,
-          SubmissionStatus.aiReviewed,
-          SubmissionStatus.pendingHuman,
-          SubmissionStatus.humanReviewed,
-          SubmissionStatus.published,
-        }.contains(submission.status);
-    final aiCompleted =
-        submission.aiReviewedAt != null ||
-        {
-          SubmissionStatus.aiReviewed,
-          SubmissionStatus.pendingHuman,
-          SubmissionStatus.humanReviewed,
-          SubmissionStatus.published,
-        }.contains(submission.status);
-    final humanCompleted =
-        submission.humanReviewedAt != null ||
-        {
-          SubmissionStatus.humanReviewed,
-          SubmissionStatus.published,
-        }.contains(submission.status);
+    final correctionDone = {
+      SubmissionStatus.humanReviewed,
+      SubmissionStatus.published,
+    }.contains(submission.status);
 
     final steps = [
       ('Copie reçue', Icons.cloud_done_outlined, true),
-      ('OCR en cours', Icons.document_scanner_outlined, ocrCompleted),
-      ('Évaluation IA', Icons.smart_toy_outlined, aiCompleted),
-      ('Validation correcteur', Icons.person_outline, humanCompleted),
+      ('Correction en cours', Icons.rate_review_outlined, correctionDone),
       ('Note publiée', Icons.check_circle_outline, submission.isPublished),
     ];
 

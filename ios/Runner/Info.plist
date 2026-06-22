@@ -22,6 +22,22 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.258866377549-9f7kmqi5bj87sghbgp0pcdtfjkrbe062</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>google</string>
+		<string>com-google-gidconsent</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -53,5 +69,7 @@
 	<string>L'application peut enregistrer des photos dans ta galerie.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>L'application a besoin du microphone pour l'enregistrement vidéo via la caméra.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Schoolline utilise Face ID pour déverrouiller ton compte plus rapidement.</string>
 </dict>
 </plist>

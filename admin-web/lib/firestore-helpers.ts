@@ -63,6 +63,9 @@ export function sessionFromDoc(id: string, data: DocumentData): SessionModel {
     endDate: toDate(data.endDate),
     price: Number(data.price ?? 0),
     createdBy: data.createdBy ?? '',
+    isOnDemand: data.isOnDemand ?? false,
+    visibility: data.visibility ?? 'public',
+    requestedBy: data.requestedBy ?? undefined,
   };
 }
 
@@ -264,6 +267,33 @@ function paymentFromDoc(id: string, data: DocumentData): PaymentModel {
   };
 }
 
+/** Lecture ponctuelle de TOUS les paiements (pour la page stats). */
+export async function getAllPayments(): Promise<PaymentModel[]> {
+  const snap = await getDocs(
+    query(collection(db, 'payments'), orderBy('submittedAt', 'desc'))
+  );
+  return snap.docs.map((d) => paymentFromDoc(d.id, d.data()));
+}
+
+/** Lecture ponctuelle des stats de soumissions (pour la page stats). */
+export async function getSubmissionStats(): Promise<SubmissionStats> {
+  const snap = await getDocs(query(collection(db, 'submissions')));
+  const docs = snap.docs.map((d) => d.data());
+  const byStatus: Record<string, number> = {};
+  let scoreSum = 0; let scoreCount = 0;
+  for (const d of docs) {
+    const s = (d.status as string) ?? 'submitted';
+    byStatus[s] = (byStatus[s] ?? 0) + 1;
+    if (typeof d.aiScore === 'number') { scoreSum += d.aiScore; scoreCount++; }
+  }
+  return {
+    total: docs.length,
+    byStatus,
+    aiOnly: docs.filter((d) => d.status === 'published' && !d.correctorId).length,
+    avgAiScore: scoreCount > 0 ? Math.round((scoreSum / scoreCount) * 10) / 10 : null,
+  };
+}
+
 /** Listener temps réel sur TOUS les paiements (toutes sessions, tous statuts). */
 export function subscribeToAllPayments(
   callback: (payments: PaymentModel[]) => void
@@ -327,6 +357,37 @@ export function subscribeToDashboardStats(
       autoPublished: docs.filter(
         (d) => d.status === 'published' && !d.correctorId
       ).length,
+    });
+  });
+}
+
+// ─── Stats soumissions temps réel ───────────────────────────────
+
+export interface SubmissionStats {
+  total: number;
+  byStatus: Record<string, number>;
+  aiOnly: number;
+  avgAiScore: number | null;
+}
+
+export function subscribeToSubmissionStats(
+  callback: (stats: SubmissionStats) => void
+): () => void {
+  const q = query(collection(db, 'submissions'));
+  return onSnapshot(q, (snap: QuerySnapshot) => {
+    const docs = snap.docs.map((d) => d.data());
+    const byStatus: Record<string, number> = {};
+    let scoreSum = 0; let scoreCount = 0;
+    for (const d of docs) {
+      const s = (d.status as string) ?? 'submitted';
+      byStatus[s] = (byStatus[s] ?? 0) + 1;
+      if (typeof d.aiScore === 'number') { scoreSum += d.aiScore; scoreCount++; }
+    }
+    callback({
+      total: docs.length,
+      byStatus,
+      aiOnly: docs.filter((d) => d.status === 'published' && !d.correctorId).length,
+      avgAiScore: scoreCount > 0 ? Math.round((scoreSum / scoreCount) * 10) / 10 : null,
     });
   });
 }

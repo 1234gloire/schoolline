@@ -3,7 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
-  title: "ExamSim Congo — Administration",
+  title: "DiakExam — Administration",
   description: "Plateforme de correction et administration des examens",
 };
 

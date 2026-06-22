@@ -33,28 +33,28 @@ class LegalInformationScreen extends StatelessWidget {
               icon: Icons.lock_outline,
               title: 'Sécurité et accès',
               body:
-                  'Chaque élève est responsable de la confidentialité de ses identifiants. Le mot de passe peut être modifié depuis le profil. En cas d’anomalie, un administrateur peut suspendre un compte.',
+                  "Chaque élève est responsable de la confidentialité de ses identifiants. Le mot de passe peut être modifié depuis le profil. En cas d'anomalie, un administrateur peut suspendre un compte.",
             ),
             const SizedBox(height: 14),
             const _LegalSectionCard(
               icon: Icons.school_outlined,
               title: 'Usage pédagogique',
               body:
-                  'Les sessions, sujets, copies et résultats sont fournis dans un cadre d’évaluation ou d’entraînement scolaire. Les informations affichées dans l’application doivent être vérifiées par l’organisation qui exploite la plateforme.',
+                  "Les sessions, sujets, copies et résultats sont fournis dans un cadre d'évaluation ou d'entraînement scolaire. Les informations affichées dans l'application doivent être vérifiées par l'organisation qui exploite la plateforme.",
             ),
             const SizedBox(height: 14),
             const _LegalSectionCard(
               icon: Icons.payments_outlined,
               title: 'Paiements et validation',
               body:
-                  'Certaines sessions peuvent nécessiter une validation de paiement avant ouverture. Les preuves soumises sont utilisées uniquement pour traiter l’accès à la session concernée.',
+                  "Certaines sessions peuvent nécessiter une validation de paiement avant ouverture. Les preuves soumises sont utilisées uniquement pour traiter l'accès à la session concernée.",
             ),
             const SizedBox(height: 14),
             _LegalSectionCard(
               icon: Icons.notifications_outlined,
               title: 'Notifications',
               body:
-                  'Les notifications servent à informer l’élève des ouvertures de sessions, rappels utiles et publications de résultats. Elles peuvent apparaître sous forme de push natif ou de notification locale selon l’état de l’application et les autorisations accordées sur l’appareil.',
+                  "Les notifications servent à informer l'élève des ouvertures de sessions, rappels utiles et publications de résultats. Elles peuvent apparaître sous forme de push natif ou de notification locale selon l'état de l'application et les autorisations accordées sur l'appareil.",
             ),
             const SizedBox(height: 14),
             _LegalSectionCard(
@@ -99,7 +99,7 @@ class _LegalIntroCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Cette page résume les règles d’utilisation du profil élève, la gestion des données essentielles et les points de vigilance sur la sécurité du compte.',
+            "Cette page résume les règles d'utilisation du profil élève, la gestion des données essentielles et les points de vigilance sur la sécurité du compte.",
             style: TextStyle(color: Colors.white, fontSize: 13, height: 1.45),
           ),
         ],
@@ -278,23 +278,23 @@ class _LegalFooterCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: context.palette.surfaceVariant,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFCD34D)),
+        border: Border.all(color: context.palette.divider),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Version de l’application',
+            'Version de l\'application',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFF92400E),
+              color: context.palette.textPrimary,
             ),
           ),
           const SizedBox(height: 6),
           Text(
             '${AppConstants.appName} ${AppConstants.appVersion}',
-            style: const TextStyle(fontSize: 13, color: Color(0xFF92400E)),
+            style: TextStyle(fontSize: 13, color: context.palette.textSecondary),
           ),
         ],
       ),

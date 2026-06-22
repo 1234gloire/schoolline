@@ -203,5 +203,13 @@ service cloud.firestore {
     match /training_data/{docId} {
       allow read, write: if isAdmin();
     }
+
+    // ─── Annonces ───────────────────────────────────────────────
+    // L'admin lit l'historique. L'envoi/écriture passe par la Cloud
+    // Function sendAnnouncement (Admin SDK, qui contourne ces règles).
+    match /announcements/{announcementId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
   }
 }

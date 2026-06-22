@@ -2,7 +2,7 @@ class AppConstants {
   AppConstants._();
 
   // App info
-  static const String appName = 'ExamSim Congo';
+  static const String appName = 'DiakExam';
   static const String appVersion = '1.0.0';
 
   // Firestore collections

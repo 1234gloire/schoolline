@@ -1,23 +1,34 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../models/user_model.dart';
 import '../core/constants/app_constants.dart';
 import '../core/utils/app_logger.dart';
+import 'notification_settings_provider.dart';
 
 // ─── Firebase Auth state stream ───
 final firebaseAuthProvider = Provider<FirebaseAuth>((ref) {
   return FirebaseAuth.instance;
 });
 
+final googleSignInProvider = Provider<GoogleSignIn>((ref) {
+  return GoogleSignIn();
+});
+
 final authStateProvider = StreamProvider<User?>((ref) {
-  return ref.watch(firebaseAuthProvider).authStateChanges();
+  return ref.watch(firebaseAuthProvider).userChanges();
 });
 
 // ─── UserModel du profil Firestore ───
@@ -30,15 +41,16 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
+  final GoogleSignIn _googleSignIn;
   late final StreamSubscription<User?> _authSubscription;
 
   StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _profileSubscription;
 
-  AuthNotifier(this._auth, this._firestore, this._storage)
+  AuthNotifier(this._auth, this._firestore, this._storage, this._googleSignIn)
     : super(const AsyncValue.loading()) {
-    _authSubscription = _auth.authStateChanges().listen(
+    _authSubscription = _auth.userChanges().listen(
       _handleAuthStateChanged,
     );
 
@@ -47,6 +59,8 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
         .listen((token) {
           final uid = _auth.currentUser?.uid;
           if (uid == null) return;
+          // Respecter l'opt-out local : ne pas réenregistrer un token désactivé.
+          if (!notificationsLocallyEnabled()) return;
           _firestore
               .collection(AppConstants.usersCollection)
               .doc(uid)
@@ -138,16 +152,21 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
 
   Future<void> _saveFcmToken(String uid) async {
     try {
+      // L'utilisateur a désactivé les notifications dans son profil → ne rien
+      // (re)demander ni enregistrer (gère aussi l'opt-out après login).
+      if (!notificationsLocallyEnabled()) return;
+
       final messaging = FirebaseMessaging.instance;
 
-      // Demander la permission (obligatoire iOS, ignoré Android ≥13 qui la gère nativement)
-      final settings = await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-
-      if (settings.authorizationStatus == AuthorizationStatus.denied) return;
+      // Ne pas déclencher la demande de permission ici : l'UI s'en charge
+      // (prompt au premier lancement / réglage du profil). On enregistre le
+      // token uniquement si la permission est déjà accordée.
+      final settings = await messaging.getNotificationSettings();
+      final status = settings.authorizationStatus;
+      if (status != AuthorizationStatus.authorized &&
+          status != AuthorizationStatus.provisional) {
+        return;
+      }
 
       // Sur iOS/macOS, le token APNS peut ne pas être enregistré immédiatement.
       // On patiente jusqu'à 5 secondes avant d'abandonner.
@@ -368,6 +387,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
           message: 'Aucun utilisateur authentifié après la connexion.',
         );
       }
+      await user.reload();
       final profile = await _loadOrCreateUserProfile(user);
       if (profile.blocked) {
         await _auth.signOut();
@@ -379,6 +399,135 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
         throw blocked;
       }
       state = AsyncValue.data(profile);
+    } on FirebaseAuthException catch (e) {
+      state = AsyncValue.error(e, StackTrace.current);
+      rethrow;
+    } on FirebaseException catch (e, st) {
+      state = AsyncValue.error(e, st);
+      rethrow;
+    }
+  }
+
+  Future<void> signInWithGoogle() async {
+    try {
+      state = const AsyncValue.loading();
+      final googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        throw FirebaseAuthException(
+          code: 'aborted-by-user',
+          message: 'Connexion Google annulée.',
+        );
+      }
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      final userCredential = await _auth.signInWithCredential(credential);
+      final user = userCredential.user;
+      if (user == null) {
+        throw FirebaseAuthException(
+          code: 'user-not-found',
+          message: 'Aucun utilisateur authentifié après la connexion Google.',
+        );
+      }
+      final profile = await _loadOrCreateUserProfile(user);
+      if (profile.blocked) {
+        await signOut();
+        final blocked = FirebaseAuthException(
+          code: 'user-disabled',
+          message: 'Ton compte a été suspendu. Contacte un administrateur.',
+        );
+        state = AsyncValue.error(blocked, StackTrace.current);
+        throw blocked;
+      }
+      state = AsyncValue.data(profile);
+    } on FirebaseAuthException catch (e) {
+      state = AsyncValue.error(e, StackTrace.current);
+      rethrow;
+    } on FirebaseException catch (e, st) {
+      state = AsyncValue.error(e, st);
+      rethrow;
+    }
+  }
+
+  Future<void> signInWithApple() async {
+    try {
+      state = const AsyncValue.loading();
+
+      final rawNonce = _generateNonce();
+      final nonce = _sha256ofString(rawNonce);
+
+      final appleCredential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: nonce,
+      );
+
+      // Apple ne fournit le nom complet qu'à la toute première connexion.
+      final firstName = appleCredential.givenName ?? '';
+      final lastName = appleCredential.familyName ?? '';
+      final fullName = [firstName, lastName]
+          .where((s) => s.isNotEmpty)
+          .join(' ')
+          .trim();
+
+      final oauthCredential = OAuthProvider('apple.com').credential(
+        idToken: appleCredential.identityToken,
+        rawNonce: rawNonce,
+      );
+
+      final userCredential = await _auth.signInWithCredential(oauthCredential);
+      final user = userCredential.user;
+      if (user == null) {
+        throw FirebaseAuthException(
+          code: 'user-not-found',
+          message: 'Aucun utilisateur authentifié après la connexion Apple.',
+        );
+      }
+
+      UserModel? preferredProfile;
+      if (fullName.isNotEmpty &&
+          (userCredential.additionalUserInfo?.isNewUser ?? false)) {
+        await user.updateDisplayName(fullName);
+        preferredProfile = _profileFromAuthUser(user).copyWith(
+          displayName: fullName,
+        );
+      }
+
+      final profile = await _loadOrCreateUserProfile(
+        user,
+        preferredProfile: preferredProfile,
+      );
+
+      if (profile.blocked) {
+        await signOut();
+        final blocked = FirebaseAuthException(
+          code: 'user-disabled',
+          message: 'Ton compte a été suspendu. Contacte un administrateur.',
+        );
+        state = AsyncValue.error(blocked, StackTrace.current);
+        throw blocked;
+      }
+
+      state = AsyncValue.data(profile);
+    } on SignInWithAppleAuthorizationException catch (e) {
+      final isCancel = e.code == AuthorizationErrorCode.canceled;
+      final mapped = FirebaseAuthException(
+        code: isCancel ? 'aborted-by-user' : 'apple-auth-error',
+        message: isCancel ? 'Connexion Apple annulée.' : e.message,
+      );
+      state = AsyncValue.error(mapped, StackTrace.current);
+      throw mapped;
+    } on SignInWithAppleNotSupportedException catch (_) {
+      final mapped = FirebaseAuthException(
+        code: 'apple-not-supported',
+        message: 'Sign In with Apple non disponible sur cet appareil.',
+      );
+      state = AsyncValue.error(mapped, StackTrace.current);
+      throw mapped;
     } on FirebaseAuthException catch (e) {
       state = AsyncValue.error(e, StackTrace.current);
       rethrow;
@@ -418,6 +567,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
         abandonedSubjectIds: [],
       );
       await credential.user!.updateDisplayName(displayName.trim());
+      await credential.user!.sendEmailVerification();
       final savedProfile = await _loadOrCreateUserProfile(
         credential.user!,
         preferredProfile: user,
@@ -433,8 +583,34 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
   }
 
   Future<void> signOut() async {
+    await _googleSignIn.signOut();
     await _auth.signOut();
     state = const AsyncValue.data(null);
+  }
+
+  Future<void> deleteMyAccount() async {
+    await _requireAuthenticatedUser();
+
+    try {
+      state = const AsyncValue.loading();
+      final callable = FirebaseFunctions.instanceFor(
+        region: AppConstants.functionsRegion,
+      ).httpsCallable('deleteMyAccount');
+
+      await callable.call();
+      await _googleSignIn.signOut();
+      await _auth.signOut();
+      state = const AsyncValue.data(null);
+    } on FirebaseAuthException catch (e) {
+      state = AsyncValue.error(e, StackTrace.current);
+      rethrow;
+    } on FirebaseFunctionsException catch (e, st) {
+      state = AsyncValue.error(e, st);
+      rethrow;
+    } on FirebaseException catch (e, st) {
+      state = AsyncValue.error(e, st);
+      rethrow;
+    }
   }
 
   Future<void> markSubjectAbandoned(String subjectId) async {
@@ -547,6 +723,27 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserModel?>> {
     await _auth.sendPasswordResetEmail(email: email);
   }
 
+  Future<void> sendPasswordResetEmail(String email) async {
+    await _auth.sendPasswordResetEmail(email: email.trim());
+  }
+
+  Future<void> sendEmailVerification() async {
+    final firebaseUser = await _requireAuthenticatedUser();
+    if (firebaseUser.emailVerified) return;
+    await firebaseUser.sendEmailVerification();
+  }
+
+  Future<bool> reloadEmailVerificationStatus() async {
+    final firebaseUser = await _requireAuthenticatedUser();
+    await firebaseUser.reload();
+    final refreshedUser = _auth.currentUser;
+    if (refreshedUser == null) return false;
+
+    final profile = state.value ?? await _loadOrCreateUserProfile(refreshedUser);
+    state = AsyncValue.data(profile);
+    return refreshedUser.emailVerified;
+  }
+
   Future<void> updateProfilePhoto(File file) async {
     final firebaseUser = await _requireAuthenticatedUser();
     final currentProfile =
@@ -632,8 +829,26 @@ final authNotifierProvider =
         FirebaseAuth.instance,
         FirebaseFirestore.instance,
         FirebaseStorage.instance,
+        ref.watch(googleSignInProvider),
       );
     });
+
+// ─── Helpers Apple Sign In ───────────────────────────────────────
+
+String _generateNonce([int length = 32]) {
+  const charset =
+      '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+  final random = Random.secure();
+  return List.generate(
+    length,
+    (_) => charset[random.nextInt(charset.length)],
+  ).join();
+}
+
+String _sha256ofString(String input) {
+  final bytes = utf8.encode(input);
+  return sha256.convert(bytes).toString();
+}
 
 // Helper: message d'erreur Firebase Auth lisible
 String firebaseAuthErrorMessage(FirebaseAuthException e) {
@@ -658,6 +873,12 @@ String firebaseAuthErrorMessage(FirebaseAuthException e) {
       return 'Pas de connexion internet.';
     case 'too-many-requests':
       return 'Trop de tentatives. Réessayez plus tard.';
+    case 'aborted-by-user':
+      return 'Connexion annulée.';
+    case 'apple-auth-error':
+      return 'Erreur de connexion Apple. Réessaie.';
+    case 'apple-not-supported':
+      return 'Connexion Apple non disponible. Utilise un iPhone réel.';
     default:
       return 'Erreur : ${e.message}';
   }
@@ -667,10 +888,26 @@ String authErrorMessage(Object error) {
   if (error is FirebaseAuthException) {
     return firebaseAuthErrorMessage(error);
   }
+  if (error is FirebaseFunctionsException) {
+    switch (error.code) {
+      case 'unauthenticated':
+        return 'Reconnecte-toi puis réessaie.';
+      case 'failed-precondition':
+        return error.message ?? 'Cette action n’est pas autorisée.';
+      case 'internal':
+        return error.message ?? 'Suppression impossible pour le moment.';
+      default:
+        return error.message ?? 'Une erreur est survenue côté serveur.';
+    }
+  }
   if (error is FirebaseException) {
     switch (error.code) {
       case 'permission-denied':
         return 'Le profil n’est pas accessible pour le moment.';
+      case 'failed-precondition':
+        return error.message ?? 'Cette action n’est pas autorisée.';
+      case 'internal':
+        return error.message ?? 'Suppression impossible pour le moment.';
       case 'unauthorized':
         return 'Accès refusé au stockage. Vérifie les règles Firebase.';
       case 'unavailable':

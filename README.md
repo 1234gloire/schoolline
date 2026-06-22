@@ -138,3 +138,18 @@ npm run build
 - les mentions legales doivent etre renseignees via `--dart-define` avant une mise en production publique
 - la recette push doit etre validee sur vrai appareil iOS et Android
 - les tests automatiques couvrent surtout le mobile aujourd'hui ; l'admin web et les functions ont encore besoin de tests dedies
+
+
+git status
+git add admin-web/app/payments/page.tsx admin-web/lib/types.ts admin-web/lib/firestore-helpers.ts lib/features/payment/screens/payment_screen.dart
+git commit -m "Improve PayDunya payment flow and admin tracking"
+git push
+
+
+cd admin-web
+vercel --prod
+
+
+cd functions
+npm run build
+firebase deploy --only functions:createPaydunyaInvoice,functions:paydunyaWebhook

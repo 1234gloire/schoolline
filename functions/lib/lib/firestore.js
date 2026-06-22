@@ -53,6 +53,8 @@ exports.collections = {
     payment: (paymentId) => exports.db.collection('payments').doc(paymentId),
     studentResults: (sessionId) => exports.db.collection('sessions').doc(sessionId).collection('studentResults'),
     studentResult: (sessionId, userId) => exports.db.collection('sessions').doc(sessionId).collection('studentResults').doc(userId),
+    announcements: () => exports.db.collection('announcements'),
+    announcement: (announcementId) => exports.db.collection('announcements').doc(announcementId),
 };
 // ─── Helpers ───
 async function getAvailableCorrector() {

@@ -43,6 +43,14 @@ export const submitPaymentProof = onCall<SubmitPaymentPayload>({ invoker: 'publi
   }
   const sessionData = sessionSnap.data()!;
 
+  const startDate = sessionData['startDate'] as admin.firestore.Timestamp | undefined;
+  if (startDate && startDate.toMillis() <= Date.now()) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Les inscriptions sont closes : cette session a déjà commencé.',
+    );
+  }
+
   await collections.payments().add({
     userId,
     sessionId,

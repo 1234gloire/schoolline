@@ -42,6 +42,7 @@ class _ExamScreenState extends ConsumerState<ExamScreen>
   SubjectModel? _subject;
   bool _examExpired = false;
   bool _examModeEnabled = false;
+  DateTime? _backgroundedAt;
 
   @override
   void initState() {
@@ -75,6 +76,42 @@ class _ExamScreenState extends ConsumerState<ExamScreen>
     WidgetsBinding.instance.removeObserver(this);
     _restoreSystemUi();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (!_examModeEnabled || _examExpired) return;
+
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        _backgroundedAt ??= DateTime.now();
+      case AppLifecycleState.resumed:
+        final backgroundedAt = _backgroundedAt;
+        if (backgroundedAt == null) break;
+        _backgroundedAt = null;
+        if (!mounted) break;
+        final seconds = DateTime.now().difference(backgroundedAt).inSeconds;
+        // Absence courte : avertissement non bloquant.
+        if (seconds < 300) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Absence de ${seconds}s détectée. Reviens à l\'épreuve.',
+              ),
+              backgroundColor: AppColors.warning,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          // Absence ≥ 5 minutes : traite comme un abandon volontaire.
+          final subject = _subject;
+          if (subject != null) _handleExitExam(subject);
+        }
+      default:
+        break;
+    }
   }
 
   void _onExamExpired(SubjectModel subject) {

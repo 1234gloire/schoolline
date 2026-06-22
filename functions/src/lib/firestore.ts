@@ -26,6 +26,10 @@ export const collections = {
     db.collection('sessions').doc(sessionId).collection('studentResults'),
   studentResult: (sessionId: string, userId: string) =>
     db.collection('sessions').doc(sessionId).collection('studentResults').doc(userId),
+
+  announcements: () => db.collection('announcements'),
+  announcement: (announcementId: string) =>
+    db.collection('announcements').doc(announcementId),
 };
 
 // ─── Helpers ───

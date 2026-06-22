@@ -82,6 +82,7 @@ export const publishResults = onCall<{ sessionId: string }>({ invoker: 'public' 
     // Calculer la moyenne générale pondérée
     let totalPoints = 0;
     let totalCoefficients = 0;
+    let lastSubmittedAtMs = 0;
     const subjectResults: SubjectResultEntry[] = [];
 
     for (const sub of effectiveSubmissions) {
@@ -96,6 +97,11 @@ export const publishResults = onCall<{ sessionId: string }>({ invoker: 'public' 
 
       totalPoints += rounded * coefficient;
       totalCoefficients += coefficient;
+
+      const submittedAt = data['submittedAt'] as admin.firestore.Timestamp | undefined;
+      if (submittedAt && submittedAt.toMillis() > lastSubmittedAtMs) {
+        lastSubmittedAtMs = submittedAt.toMillis();
+      }
 
       subjectResults.push({
         subjectId: data['subjectId'] as string,
@@ -138,6 +144,9 @@ export const publishResults = onCall<{ sessionId: string }>({ invoker: 'public' 
       mention,
       subjects: subjectResults,
       publishedAt: now,
+      lastSubmittedAt: lastSubmittedAtMs > 0
+        ? admin.firestore.Timestamp.fromMillis(lastSubmittedAtMs)
+        : now,
     }));
 
     notifyUserIds.push(userId);
@@ -234,6 +243,7 @@ async function tryComputeStudentResult(
 
     let totalPoints = 0;
     let totalCoefficients = 0;
+    let lastSubmittedAtMs = 0;
     const subjectResults: SubjectResultEntry[] = [];
 
     for (const sub of effectiveDocs) {
@@ -245,6 +255,10 @@ async function tryComputeStudentResult(
       const rounded = Math.round(scoreOn20 * 100) / 100;
       totalPoints += rounded * coefficient;
       totalCoefficients += coefficient;
+      const submittedAt = d['submittedAt'] as admin.firestore.Timestamp | undefined;
+      if (submittedAt && submittedAt.toMillis() > lastSubmittedAtMs) {
+        lastSubmittedAtMs = submittedAt.toMillis();
+      }
       subjectResults.push({
         subjectId: d['subjectId'] as string,
         subjectName: d['subjectName'] as string,
@@ -270,6 +284,9 @@ async function tryComputeStudentResult(
       mention: computeMention(moyenneGenerale),
       subjects: subjectResults,
       publishedAt: now,
+      lastSubmittedAt: lastSubmittedAtMs > 0
+        ? admin.firestore.Timestamp.fromMillis(lastSubmittedAtMs)
+        : now,
     });
   } catch (err) {
     logger.warn('tryComputeStudentResult échoué (best-effort)', { sessionId, userId, err });

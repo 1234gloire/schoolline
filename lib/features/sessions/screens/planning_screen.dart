@@ -9,6 +9,7 @@ import '../../../models/payment_model.dart';
 import '../../../models/session_model.dart';
 import '../../../models/submission_model.dart';
 import '../../../models/subject_model.dart';
+import '../../../models/user_model.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/payments_provider.dart';
 import '../../../providers/sessions_provider.dart';
@@ -36,6 +37,8 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
   @override
   Widget build(BuildContext context) {
     final sessionsAsync = ref.watch(sessionsProvider);
+    final currentUser = ref.watch(currentUserProvider);
+    final canSeeRequestEntry = currentUser?.isStudent ?? false;
 
     return Scaffold(
       backgroundColor: context.palette.background,
@@ -47,6 +50,9 @@ class _PlanningScreenState extends ConsumerState<PlanningScreen> {
               title: 'Aucune session disponible',
               message: 'Les sessions apparaîtront ici dès leur ouverture.',
               showBack: widget.isRoute || widget.sessionId != null,
+              onRequestSession: canSeeRequestEntry
+                  ? () => handleRequestOnDemandTap(context, currentUser)
+                  : null,
             );
           }
 
@@ -126,6 +132,8 @@ class _PlanningHeader extends ConsumerWidget {
     final subjectsAsync = ref.watch(subjectsProvider(session.id));
     final subjects = subjectsAsync.asData?.value ?? [];
     final topPad = MediaQuery.of(context).padding.top;
+    final currentUser = ref.watch(currentUserProvider);
+    final canSeeRequestEntry = currentUser?.isStudent ?? false;
 
     // Extraire les jours uniques
     final days = <DateTime>{};
@@ -207,6 +215,40 @@ class _PlanningHeader extends ConsumerWidget {
                   ),
                 ),
                 const Spacer(),
+                if (canSeeRequestEntry)
+                  GestureDetector(
+                    onTap: () => handleRequestOnDemandTap(context, currentUser),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withAlpha(40),
+                        borderRadius: BorderRadius.circular(20),
+                        border:
+                            Border.all(color: AppColors.accent.withAlpha(90)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.add_circle_outline_rounded,
+                            color: Colors.white.withAlpha(230),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Demander une session',
+                            style: TextStyle(
+                              color: Colors.white.withAlpha(230),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 if (sessions.length > 1)
                   GestureDetector(
                     onTap: () => _showSessionPicker(context),
@@ -762,7 +804,7 @@ class _StatusBadge extends StatelessWidget {
       switch (submission!.status) {
         case SubmissionStatus.published:
           return _badge('TERMINÉ', const Color(0xFF16A34A),
-              const Color(0xFFDCFCE7));
+              const Color(0xFF16A34A).withAlpha(22));
         case SubmissionStatus.humanReviewed:
           return _badge('CORRIGÉ', AppColors.statusPublished,
               AppColors.statusPublished.withAlpha(20));
@@ -775,7 +817,7 @@ class _StatusBadge extends StatelessWidget {
     switch (timeStatus) {
       case ExamTimeStatus.accessible:
         return _badge(
-            'EN COURS', const Color(0xFFEA580C), const Color(0xFFFFEDD5));
+            'EN COURS', const Color(0xFFEA580C), const Color(0xFFEA580C).withAlpha(22));
       case ExamTimeStatus.upcoming:
         return _badge('À VENIR', context.palette.textSecondary,
             context.palette.surfaceVariant);
@@ -900,6 +942,8 @@ class _PaymentGate extends StatelessWidget {
     return paymentAsync.when(
       data: (payment) {
         final isPending = payment?.isPending ?? false;
+        final isAutomaticPayment = payment?.isMobileMoney == true;
+        final canRetry = isAutomaticPayment || (payment?.isGhostPending ?? false);
         return Center(
           child: Padding(
             padding: const EdgeInsets.all(28),
@@ -933,7 +977,9 @@ class _PaymentGate extends StatelessWidget {
                 const SizedBox(height: 10),
                 Text(
                   isPending
-                      ? 'Ta preuve de paiement est en cours de vérification. Tu seras notifié dès validation.'
+                      ? canRetry
+                          ? 'Ton paiement est en cours de confirmation. Tu seras notifié dès validation.'
+                          : 'Ta preuve de paiement est en cours de vérification. Tu seras notifié dès validation.'
                       : 'Accède à toutes les épreuves de ${session.title} pour ${session.price.toStringAsFixed(0)} FCFA.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
@@ -943,14 +989,23 @@ class _PaymentGate extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
-                if (!isPending)
+                if (!isPending || canRetry)
                   ElevatedButton.icon(
                     onPressed: () => context.push(
                       AppRoutes.paymentPath(session.id),
                       extra: {'session': session},
                     ),
-                    icon: const Icon(Icons.payment_outlined, size: 18),
-                    label: Text('Payer ${session.price.toStringAsFixed(0)} FCFA'),
+                    icon: Icon(
+                      isPending
+                          ? Icons.refresh_rounded
+                          : Icons.payment_outlined,
+                      size: 18,
+                    ),
+                    label: Text(
+                      isPending
+                          ? 'Réessayer le paiement'
+                          : 'Payer ${session.price.toStringAsFixed(0)} FCFA',
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
@@ -1021,6 +1076,47 @@ class _PaymentGate extends StatelessWidget {
   }
 }
 
+// ─── Demande de session à la demande ──────────────────────────────────────────
+/// Point d'entrée partagé (header + état vide) pour demander une session.
+/// Si le profil n'est pas complet, redirige vers l'édition du profil plutôt
+/// que de laisser la Cloud Function rejeter silencieusement la demande.
+void handleRequestOnDemandTap(BuildContext context, UserModel? user) {
+  if (user == null) return;
+
+  if (!user.isProfileComplete) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Profil incomplet'),
+        content: const Text(
+          'Complète ton profil (téléphone, établissement, classe et série) '
+          'avant de demander une session.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              context.push(AppRoutes.editProfile);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Compléter mon profil'),
+          ),
+        ],
+      ),
+    );
+    return;
+  }
+
+  context.push(AppRoutes.requestOnDemandSession);
+}
+
 // ─── États génériques ─────────────────────────────────────────────────────────
 class _LoadingView extends StatelessWidget {
   const _LoadingView();
@@ -1036,12 +1132,14 @@ class _PlanningStateView extends StatelessWidget {
   final String title;
   final String message;
   final bool showBack;
+  final VoidCallback? onRequestSession;
 
   const _PlanningStateView({
     required this.icon,
     required this.title,
     required this.message,
     this.showBack = false,
+    this.onRequestSession,
   });
 
   @override
@@ -1091,6 +1189,23 @@ class _PlanningStateView extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
+              if (onRequestSession != null) ...[
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: onRequestSession,
+                  icon: const Icon(Icons.add_circle_outline_rounded),
+                  label: const Text('Demander une session'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

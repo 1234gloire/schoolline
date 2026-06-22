@@ -42,6 +42,9 @@ export interface SessionModel {
   endDate: Date;
   price: number;
   createdBy: string;
+  isOnDemand?: boolean;
+  visibility?: 'public' | 'private';
+  requestedBy?: string;
 }
 
 export interface SubjectModel {

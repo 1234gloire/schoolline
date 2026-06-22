@@ -58,13 +58,13 @@ function PaymentsContent() {
     (p) =>
       p.status === 'pending' &&
       p.provider !== 'paydunya' &&
-      p.provider !== 'feexpay' &&
+      p.provider !== 'pawapay' &&
       Boolean(p.proofFileRef)
   );
   const automaticPendingPayments = allPayments.filter(
     (p) =>
       p.status === 'pending' &&
-      (p.provider === 'paydunya' || p.provider === 'feexpay')
+      (p.provider === 'paydunya' || p.provider === 'pawapay')
   );
 
   async function openProof(payment: PaymentModel) {
@@ -197,7 +197,7 @@ function PaymentsContent() {
                   Paiements élèves
                 </h1>
                 <p className="max-w-2xl text-sm leading-6 text-white/72">
-                  Suivez les encaissements PayDunya, les paiements en cours de
+                  Suivez les encaissements Mobile Money (PawaPay), les paiements en cours de
                   confirmation et l&apos;historique des transactions élèves.
                 </p>
               </div>
@@ -243,7 +243,7 @@ function PaymentsContent() {
                   value={`${approvedTotal.toLocaleString('fr-FR')} FCFA`}
                 />
                 <SummaryRow
-                  label="PayDunya en cours"
+                  label="Mobile Money en cours"
                   value={`${automaticPendingTotal.toLocaleString('fr-FR')} FCFA`}
                 />
                 <SummaryRow
@@ -270,7 +270,7 @@ function PaymentsContent() {
               tone: 'green',
             },
             {
-              label: 'PayDunya en cours',
+              label: 'Mobile Money en cours',
               value: automaticPendingTotal.toLocaleString('fr-FR'),
               suffix: 'FCFA',
               helper: `${automaticPendingPayments.length} confirmation(s)`,

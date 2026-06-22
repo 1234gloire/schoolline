@@ -16,6 +16,9 @@ dependencies:
   # Firebase
   firebase_core: ^3.8.0
   firebase_auth: ^5.3.4
+  google_sign_in: ^6.2.2
+  sign_in_with_apple: ^6.1.2
+  crypto: ^3.0.5
   cloud_firestore: ^5.6.0
   firebase_storage: ^12.3.7
   firebase_messaging: ^15.2.1
@@ -48,6 +51,7 @@ dependencies:
 
   # Permissions
   permission_handler: ^11.3.1
+  local_auth: ^2.3.0
 
   # Notifications locales
   flutter_local_notifications: ^17.2.4
@@ -67,6 +71,22 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   build_runner: ^2.4.13
   hive_generator: ^2.0.1
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/logo_diakexam.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#0A1172"
+  adaptive_icon_foreground: "assets/images/logo_diakexam.png"
+  remove_alpha_ios: true
+  web:
+    generate: false
+  windows:
+    generate: false
+  macos:
+    generate: false
 
 flutter:
   uses-material-design: true

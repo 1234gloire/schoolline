@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum PaymentStatus { pending, approved, rejected }
 
+/// provider : 'manual' (preuve uploadée) | 'pawapay' (mobile money automatique)
 class PaymentModel {
   final String id;
   final String userId;
@@ -14,6 +15,9 @@ class PaymentModel {
   final DateTime? reviewedAt;
   final String? reviewedBy;
   final String? rejectionReason;
+  final String provider;
+  final String? transKey;
+  final String? providerRef;
 
   const PaymentModel({
     required this.id,
@@ -27,6 +31,9 @@ class PaymentModel {
     this.reviewedAt,
     this.reviewedBy,
     this.rejectionReason,
+    this.provider = 'manual',
+    this.transKey,
+    this.providerRef,
   });
 
   factory PaymentModel.fromFirestore(DocumentSnapshot doc) {
@@ -46,17 +53,27 @@ class PaymentModel {
       reviewedAt: (data['reviewedAt'] as Timestamp?)?.toDate(),
       reviewedBy: data['reviewedBy'],
       rejectionReason: data['rejectionReason'],
+      provider: data['provider'] ?? 'manual',
+      transKey: data['transKey'],
+      providerRef: data['providerRef'],
     );
   }
 
   bool get isPending => status == PaymentStatus.pending;
   bool get isApproved => status == PaymentStatus.approved;
   bool get isRejected => status == PaymentStatus.rejected;
+  bool get isMobileMoney => provider == 'pawapay';
+
+  /// En attente, sans preuve manuelle ni provider mobile money reconnu :
+  /// aucun admin ni callback ne peut jamais la faire avancer (ex. ancien
+  /// document orphelin d'une tentative interrompue). Doit pouvoir être
+  /// relancée comme un nouveau paiement.
+  bool get isGhostPending => isPending && !isMobileMoney && proofFileRef.isEmpty;
 
   String get statusLabel {
     switch (status) {
       case PaymentStatus.pending:
-        return 'En attente de validation';
+        return isMobileMoney ? 'Confirmation en cours' : 'En attente de validation';
       case PaymentStatus.approved:
         return 'Paiement validé';
       case PaymentStatus.rejected:

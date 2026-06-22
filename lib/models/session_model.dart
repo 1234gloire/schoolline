@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum SessionStatus { draft, open, active, closed, resultsPublished }
 
+enum SessionVisibility { public, private }
+
 class SessionModel {
   final String id;
   final String title;
@@ -12,6 +14,9 @@ class SessionModel {
   final DateTime endDate;
   final double price; // FCFA
   final String createdBy;
+  final bool isOnDemand;
+  final SessionVisibility visibility;
+  final String? requestedBy;
 
   const SessionModel({
     required this.id,
@@ -23,6 +28,9 @@ class SessionModel {
     required this.endDate,
     required this.price,
     required this.createdBy,
+    this.isOnDemand = false,
+    this.visibility = SessionVisibility.public,
+    this.requestedBy,
   });
 
   factory SessionModel.fromFirestore(DocumentSnapshot doc) {
@@ -40,6 +48,12 @@ class SessionModel {
       endDate: (data['endDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       price: (data['price'] ?? 0).toDouble(),
       createdBy: data['createdBy'] ?? '',
+      isOnDemand: data['isOnDemand'] ?? false,
+      visibility: SessionVisibility.values.firstWhere(
+        (v) => v.name == (data['visibility'] ?? 'public'),
+        orElse: () => SessionVisibility.public,
+      ),
+      requestedBy: data['requestedBy'] as String?,
     );
   }
 
@@ -53,6 +67,9 @@ class SessionModel {
       'endDate': Timestamp.fromDate(endDate),
       'price': price,
       'createdBy': createdBy,
+      'isOnDemand': isOnDemand,
+      'visibility': visibility.name,
+      if (requestedBy != null) 'requestedBy': requestedBy,
     };
   }
 
@@ -88,4 +105,7 @@ class SessionModel {
       status == SessionStatus.open ||
       status == SessionStatus.active ||
       status == SessionStatus.resultsPublished;
+
+  String get visibilityLabel =>
+      visibility == SessionVisibility.private ? 'Privée' : 'Publique';
 }

@@ -67,6 +67,10 @@ exports.submitPaymentProof = (0, https_1.onCall)({ invoker: 'public' }, async (r
         throw new https_1.HttpsError('not-found', 'Session introuvable.');
     }
     const sessionData = sessionSnap.data();
+    const startDate = sessionData['startDate'];
+    if (startDate && startDate.toMillis() <= Date.now()) {
+        throw new https_1.HttpsError('failed-precondition', 'Les inscriptions sont closes : cette session a déjà commencé.');
+    }
     await firestore_1.collections.payments().add({
         userId,
         sessionId,

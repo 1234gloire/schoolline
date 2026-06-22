@@ -20,8 +20,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   // Entrées séquencées
   late Animation<double> _logoScale;
   late Animation<double> _logoFade;
-  late Animation<Offset> _titleSlide;
-  late Animation<double> _titleFade;
   late Animation<double> _taglineFade;
   late Animation<double> _loaderFade;
 
@@ -57,36 +55,20 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       ),
     );
 
-    // Titre : monte depuis le bas 30–60 %
-    _titleSlide = Tween<Offset>(
-      begin: const Offset(0.0, 0.7),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _entry,
-        curve: const Interval(0.32, 0.62, curve: Curves.easeOutCubic),
-      ),
-    );
-    _titleFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _entry,
-        curve: const Interval(0.30, 0.58, curve: Curves.easeOut),
-      ),
-    );
-
-    // Tagline : fondu 50–75 %
+    // Le logo contient deja le nom de l'app, donc on anime seulement
+    // le bloc logo puis la signature.
     _taglineFade = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _entry,
-        curve: const Interval(0.50, 0.75, curve: Curves.easeOut),
+        curve: const Interval(0.40, 0.68, curve: Curves.easeOut),
       ),
     );
 
-    // Loader : fondu 70–90 %
+    // Loader : fondu 65–88 %
     _loaderFade = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _entry,
-        curve: const Interval(0.70, 0.90, curve: Curves.easeOut),
+        curve: const Interval(0.65, 0.88, curve: Curves.easeOut),
       ),
     );
 
@@ -122,146 +104,99 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(gradient: AppColors.primaryGradient),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // ── Logo avec halo pulsant ──
-              AnimatedBuilder(
-                animation: Listenable.merge([_entry, _pulse]),
-                builder: (context, _) {
-                  return FadeTransition(
-                    opacity: _logoFade,
-                    child: ScaleTransition(
-                      scale: _logoScale,
-                      child: SizedBox(
-                        width: 160,
-                        height: 160,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Ring externe — très doux
-                            Container(
-                              width: 152,
-                              height: 152,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: AppColors.accent.withAlpha(
-                                    (_haloOuter.value * 140).toInt(),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final logoWidth = (constraints.maxWidth * 0.68).clamp(230.0, 310.0);
+            final logoHeight = logoWidth / 1.5;
+
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedBuilder(
+                    animation: Listenable.merge([_entry, _pulse]),
+                    builder: (context, _) {
+                      final glowWidth = logoWidth + 16 + (_haloOuter.value * 30);
+                      final glowHeight = logoHeight + 24 + (_halo.value * 22);
+
+                      return FadeTransition(
+                        opacity: _logoFade,
+                        child: ScaleTransition(
+                          scale: _logoScale,
+                          child: SizedBox(
+                            width: logoWidth + 44,
+                            height: logoHeight + 56,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Container(
+                                  width: glowWidth,
+                                  height: glowHeight,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(999),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppColors.primaryLight.withAlpha(
+                                          (_haloOuter.value * 110).toInt(),
+                                        ),
+                                        blurRadius: 42,
+                                        spreadRadius: 6,
+                                      ),
+                                      BoxShadow(
+                                        color: AppColors.accent.withAlpha(
+                                          (_halo.value * 70).toInt(),
+                                        ),
+                                        blurRadius: 34,
+                                        spreadRadius: 2,
+                                      ),
+                                    ],
                                   ),
-                                  width: 1.0,
                                 ),
-                              ),
-                            ),
-                            // Ring interne — doré vif
-                            Container(
-                              width: 124,
-                              height: 124,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: AppColors.accent.withAlpha(
-                                    (_halo.value * 200).toInt(),
-                                  ),
-                                  width: 1.5,
+                                Image.asset(
+                                  'assets/images/logo_diakexam.png',
+                                  width: logoWidth,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
                                 ),
-                              ),
+                              ],
                             ),
-                            // Badge logo
-                            Container(
-                              width: 100,
-                              height: 100,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withAlpha(20),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: AppColors.accent,
-                                  width: 2.5,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: AppColors.accent.withAlpha(
-                                      (_halo.value * 110).toInt(),
-                                    ),
-                                    blurRadius: 28,
-                                    spreadRadius: 4,
-                                  ),
-                                  BoxShadow(
-                                    color: AppColors.primaryLight.withAlpha(80),
-                                    blurRadius: 16,
-                                    spreadRadius: -4,
-                                  ),
-                                ],
-                              ),
-                              child: const Icon(
-                                Icons.school_rounded,
-                                color: AppColors.accent,
-                                size: 50,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  FadeTransition(
+                    opacity: _taglineFade,
+                    child: Text(
+                      'Simulation d\'examens nationaux',
+                      style: TextStyle(
+                        color: Colors.white.withAlpha(185),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.2,
                       ),
                     ),
-                  );
-                },
-              ),
-
-              const SizedBox(height: 32),
-
-              // ── Titre ──
-              FadeTransition(
-                opacity: _titleFade,
-                child: SlideTransition(
-                  position: _titleSlide,
-                  child: const Text(
-                    'ExamSim Congo',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.4,
+                  ),
+                  const SizedBox(height: 44),
+                  FadeTransition(
+                    opacity: _loaderFade,
+                    child: SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          AppColors.accent.withAlpha(210),
+                        ),
+                        strokeWidth: 2.5,
+                        strokeCap: StrokeCap.round,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-
-              const SizedBox(height: 8),
-
-              // ── Tagline ──
-              FadeTransition(
-                opacity: _taglineFade,
-                child: Text(
-                  'Simulation d\'examens nationaux',
-                  style: TextStyle(
-                    color: Colors.white.withAlpha(175),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 56),
-
-              // ── Indicateur de chargement ──
-              FadeTransition(
-                opacity: _loaderFade,
-                child: SizedBox(
-                  width: 26,
-                  height: 26,
-                  child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      AppColors.accent.withAlpha(210),
-                    ),
-                    strokeWidth: 2.5,
-                    strokeCap: StrokeCap.round,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );

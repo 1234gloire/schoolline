@@ -198,14 +198,62 @@ final studentRankingProvider = FutureProvider.autoDispose.family<
       .collection(AppConstants.sessionsCollection)
       .doc(params.sessionId)
       .collection(AppConstants.studentResultsSubcollection)
-      .orderBy('moyenneGenerale', descending: true)
       .get();
 
   if (snap.docs.isEmpty) return null;
-  final total = snap.docs.length;
-  final rank = snap.docs.indexWhere((doc) => doc.id == params.userId) + 1;
+
+  final sorted = snap.docs.map(StudentResultModel.fromFirestore).toList()
+    ..sort((a, b) {
+      final cmp = b.moyenneGenerale.compareTo(a.moyenneGenerale);
+      return cmp != 0 ? cmp : a.lastSubmittedAt.compareTo(b.lastSubmittedAt);
+    });
+
+  final total = sorted.length;
+  final rank = sorted.indexWhere((r) => r.userId == params.userId) + 1;
   if (rank == 0) return null;
   return (rank: rank, total: total);
+});
+
+// ─── Classement complet d'une session (tous les participants triés) ───
+final fullRankingProvider = StreamProvider.autoDispose.family<
+  List<({int rank, String userId, String displayName, double moyenneGenerale})>,
+  String
+>((ref, sessionId) {
+  return FirebaseFirestore.instance
+      .collection(AppConstants.sessionsCollection)
+      .doc(sessionId)
+      .collection(AppConstants.studentResultsSubcollection)
+      .snapshots()
+      .asyncMap((snap) async {
+        final results = snap.docs.map(StudentResultModel.fromFirestore).toList()
+          ..sort((a, b) {
+            final cmp = b.moyenneGenerale.compareTo(a.moyenneGenerale);
+            return cmp != 0 ? cmp : a.lastSubmittedAt.compareTo(b.lastSubmittedAt);
+          });
+
+        final userDocs = await Future.wait(
+          results.map(
+            (r) => FirebaseFirestore.instance
+                .collection(AppConstants.usersCollection)
+                .doc(r.userId)
+                .get(),
+          ),
+        );
+        final displayNames = {
+          for (final doc in userDocs)
+            doc.id: (doc.data()?['displayName'] as String?) ?? 'Élève',
+        };
+
+        return List.generate(results.length, (i) {
+          final r = results[i];
+          return (
+            rank: i + 1,
+            userId: r.userId,
+            displayName: displayNames[r.userId] ?? 'Élève',
+            moyenneGenerale: r.moyenneGenerale,
+          );
+        });
+      });
 });
 
 // ─── Bulletin de résultats d'un élève pour une session ───
@@ -384,6 +432,12 @@ String firestoreDataErrorMessage(
 bool sessionMatchesStudent(SessionModel session, UserModel user) {
   final studentClass = user.studentClass?.name ?? 'terminale';
   if (session.studentClass != studentClass) {
+    return false;
+  }
+
+  // Sessions à la demande privées : visibles uniquement par leur demandeur.
+  if (session.visibility == SessionVisibility.private &&
+      session.requestedBy != user.uid) {
     return false;
   }
 

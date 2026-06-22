@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/theme/exam_sim_palette.dart';
@@ -39,10 +40,69 @@ class _SubmissionScreenState extends ConsumerState<SubmissionScreen> {
   double _uploadProgress = 0.0;
   String _uploadStep = '';
 
+  // Brouillon local : photos copiées dans le répertoire documents pour survivre aux crashs.
+  Directory? _draftDir;
+
   @override
   void initState() {
     super.initState();
     _subject = widget.extra?['subject'] as SubjectModel?;
+    _initDraft();
+  }
+
+  Future<void> _initDraft() async {
+    final docDir = await getApplicationDocumentsDirectory();
+    final dir = Directory(
+      '${docDir.path}/submission_drafts/${widget.sessionId}_${widget.subjectId}',
+    );
+    if (!await dir.exists()) await dir.create(recursive: true);
+    _draftDir = dir;
+
+    // Restaure les photos sauvegardées lors d'un crash précédent.
+    final saved = dir
+        .listSync()
+        .whereType<File>()
+        .where((f) {
+          final ext = f.path.split('.').last.toLowerCase();
+          return ['jpg', 'jpeg', 'png', 'heic', 'webp'].contains(ext);
+        })
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+
+    if (saved.isNotEmpty && mounted) {
+      setState(() => _pages.addAll(saved.map((f) => XFile(f.path))));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${saved.length} page(s) de brouillon restaurée(s). Vérifie l\'ordre avant de soumettre.',
+            ),
+            backgroundColor: AppColors.warning,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      });
+    }
+  }
+
+  // Copie un fichier dans le répertoire de brouillon (best-effort, sans bloquer l'UI).
+  Future<void> _persistPageToDraft(XFile file) async {
+    final dir = _draftDir;
+    if (dir == null) return;
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final ext = _fileExtension(file.path);
+    try {
+      await File(file.path).copy('${dir.path}/${timestamp}_$ext.$ext');
+    } catch (_) {}
+  }
+
+  Future<void> _clearDraft() async {
+    final dir = _draftDir;
+    if (dir == null) return;
+    try {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
   }
 
   Future<void> _pickFromCamera() async {
@@ -52,7 +112,10 @@ class _SubmissionScreenState extends ConsumerState<SubmissionScreen> {
       imageQuality: 85,
       maxWidth: 2048,
     );
-    if (image != null) setState(() => _pages.add(image));
+    if (image != null) {
+      setState(() => _pages.add(image));
+      _persistPageToDraft(image);
+    }
   }
 
   Future<void> _pickFromGallery() async {
@@ -61,7 +124,12 @@ class _SubmissionScreenState extends ConsumerState<SubmissionScreen> {
       imageQuality: 85,
       maxWidth: 2048,
     );
-    if (images.isNotEmpty) setState(() => _pages.addAll(images));
+    if (images.isNotEmpty) {
+      setState(() => _pages.addAll(images));
+      for (final img in images) {
+        _persistPageToDraft(img);
+      }
+    }
   }
 
   void _removePage(int index) {
@@ -168,6 +236,7 @@ class _SubmissionScreenState extends ConsumerState<SubmissionScreen> {
       );
       ref.invalidate(mySubmissionsProvider(userId));
 
+      await _clearDraft();
       if (mounted) {
         context.pushReplacement(AppRoutes.results);
       }
