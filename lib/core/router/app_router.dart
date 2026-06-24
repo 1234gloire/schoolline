@@ -23,6 +23,7 @@ import '../../features/results/screens/result_detail_screen.dart';
 import '../../features/payment/screens/payment_screen.dart';
 import '../../features/sessions/screens/request_on_demand_session_screen.dart';
 import '../../features/sessions/screens/session_ranking_screen.dart';
+import '../../features/notifications/screens/announcements_screen.dart';
 
 // Routes nommées
 class AppRoutes {
@@ -44,6 +45,7 @@ class AppRoutes {
   static const payment = '/payment/:sessionId';
   static const requestOnDemandSession = '/sessions/request';
   static const sessionRanking = '/sessions/:sessionId/ranking';
+  static const announcements = '/announcements';
 
   static String planningSessionPath(String sessionId) => '/planning/$sessionId';
 
@@ -303,6 +305,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             SessionRankingScreen(sessionId: sessionId),
           );
         },
+      ),
+      GoRoute(
+        path: AppRoutes.announcements,
+        pageBuilder: (context, state) =>
+            _slideTransition(state, const AnnouncementsScreen()),
       ),
     ],
     errorBuilder:

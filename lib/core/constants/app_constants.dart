@@ -15,6 +15,7 @@ class AppConstants {
   static const String paymentsStoragePath = 'payments';
   static const String avatarsStoragePath = 'avatars';
   static const String trainingDataCollection = 'training_data';
+  static const String announcementsCollection = 'announcements';
 
   // Storage paths
   static const String subjectsStoragePath = 'subjects';

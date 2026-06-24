@@ -205,10 +205,12 @@ service cloud.firestore {
     }
 
     // ─── Annonces ───────────────────────────────────────────────
-    // L'admin lit l'historique. L'envoi/écriture passe par la Cloud
-    // Function sendAnnouncement (Admin SDK, qui contourne ces règles).
+    // Tout utilisateur connecté lit les annonces (filtrage par classe/série
+    // côté client, même principe que les sessions). L'admin lit l'historique
+    // complet. L'écriture passe par la Cloud Function sendAnnouncement (Admin
+    // SDK) ; la suppression côté admin-web est autorisée pour l'admin.
     match /announcements/{announcementId} {
-      allow read: if isAdmin();
+      allow read: if isAuth();
       allow write: if isAdmin();
     }
   }

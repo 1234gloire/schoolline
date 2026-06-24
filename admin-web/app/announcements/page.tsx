@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
-import { collection, getDocs, orderBy, query, limit, Timestamp } from 'firebase/firestore';
-import { Megaphone, Send, RefreshCw, CheckCircle, Users, Clock } from 'lucide-react';
+import { collection, getDocs, orderBy, query, limit, Timestamp, deleteDoc, doc } from 'firebase/firestore';
+import { Megaphone, Send, RefreshCw, CheckCircle, Users, Clock, Trash2, Loader2 } from 'lucide-react';
 import { AdminShell } from '@/components/admin/admin-shell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -63,6 +63,7 @@ function AnnouncementsContent() {
   const [history, setHistory]               = useState<AnnouncementRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError]     = useState('');
+  const [deletingId, setDeletingId]         = useState<string | null>(null);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -101,6 +102,31 @@ function AnnouncementsContent() {
   }, []);
 
   useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  async function handleDelete(id: string) {
+    if (!window.confirm("Supprimer cette annonce de l'historique ? Les notifications déjà envoyées ne sont pas rappelées.")) {
+      return;
+    }
+    setDeletingId(id);
+    setHistoryError('');
+    // Retrait optimiste
+    const previous = history;
+    setHistory((prev) => prev.filter((a) => a.id !== id));
+    try {
+      await deleteDoc(doc(db, 'announcements', id));
+    } catch (e) {
+      // Restaure en cas d'échec
+      setHistory(previous);
+      const msg = e instanceof Error ? e.message : String(e);
+      setHistoryError(
+        /permission/i.test(msg)
+          ? 'Suppression refusée (permissions).'
+          : "Impossible de supprimer l'annonce."
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const canSend = title.trim().length > 0 && body.trim().length > 0 && !sending;
 
@@ -267,10 +293,22 @@ function AnnouncementsContent() {
                 </div>
               ) : (
                 history.map((a) => (
-                  <div key={a.id} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                  <div key={a.id} className="group rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                     <div className="flex items-start justify-between gap-3">
                       <p className="font-semibold text-gray-800 text-sm">{a.title}</p>
-                      {audienceBadge(a.audience, a.series)}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {audienceBadge(a.audience, a.series)}
+                        <button
+                          onClick={() => handleDelete(a.id)}
+                          disabled={deletingId === a.id}
+                          title="Supprimer l'annonce"
+                          className="rounded-md p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-50"
+                        >
+                          {deletingId === a.id
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </div>
                     <p className="mt-1 text-xs text-gray-600 line-clamp-2">{a.body}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-400">

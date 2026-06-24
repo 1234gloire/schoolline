@@ -88,6 +88,10 @@ class _ExamSimAppState extends ConsumerState<ExamSimApp>
           router.go('/dashboard');
         }
         break;
+      case 'announcement':
+        router.go('/dashboard');
+        router.push('/announcements');
+        break;
       default:
         router.go('/dashboard');
     }

@@ -12,6 +12,7 @@ import '../../../models/session_model.dart';
 import '../../../models/submission_model.dart';
 import '../../../models/subject_model.dart';
 import '../../../models/user_model.dart';
+import '../../../providers/announcements_provider.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/biometric_lock_provider.dart';
 import '../../../providers/notification_settings_provider.dart';
@@ -406,48 +407,61 @@ class _DashboardHeader extends ConsumerWidget {
   }
 }
 
-class _NotificationsButton extends StatelessWidget {
+class _NotificationsButton extends ConsumerWidget {
   const _NotificationsButton();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     const gold = Color(0xFFF5B731);
+    final unread = ref.watch(unreadAnnouncementsCountProvider);
 
     return GestureDetector(
-      onTap: () {
-        final rootContext = context;
-        showModalBottomSheet<void>(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          builder:
-              (sheetContext) => _NotificationsSheet(
-                onOpenPlanning: () {
-                  Navigator.of(sheetContext).pop();
-                  rootContext.go(AppRoutes.planning);
-                },
-                onOpenResults: () {
-                  Navigator.of(sheetContext).pop();
-                  rootContext.go(AppRoutes.results);
-                },
+      onTap: () => context.push(AppRoutes.announcements),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: isDark ? gold.withAlpha(32) : Colors.white.withAlpha(22),
+              shape: BoxShape.circle,
+              border: isDark
+                  ? Border.all(color: gold.withAlpha(80), width: 1)
+                  : null,
+            ),
+            child: Icon(
+              Icons.notifications_outlined,
+              color: isDark ? gold : Colors.white,
+              size: 20,
+            ),
+          ),
+          if (unread > 0)
+            Positioned(
+              right: -2,
+              top: -2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                decoration: BoxDecoration(
+                  color: AppColors.error,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0xFF080E4A), width: 1.5),
+                ),
+                child: Text(
+                  unread > 9 ? '9+' : '$unread',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    height: 1.2,
+                  ),
+                ),
               ),
-        );
-      },
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: isDark ? gold.withAlpha(32) : Colors.white.withAlpha(22),
-          shape: BoxShape.circle,
-          border:
-              isDark ? Border.all(color: gold.withAlpha(80), width: 1) : null,
-        ),
-        child: Icon(
-          Icons.notifications_outlined,
-          color: isDark ? gold : Colors.white,
-          size: 20,
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -504,303 +518,6 @@ class _ThemeToggleButton extends ConsumerWidget {
         ),
       ),
     );
-  }
-}
-
-class _NotificationsSheet extends StatefulWidget {
-  final VoidCallback onOpenPlanning;
-  final VoidCallback onOpenResults;
-
-  const _NotificationsSheet({
-    required this.onOpenPlanning,
-    required this.onOpenResults,
-  });
-
-  @override
-  State<_NotificationsSheet> createState() => _NotificationsSheetState();
-}
-
-class _NotificationsSheetState extends State<_NotificationsSheet> {
-  late Future<NotificationSettings> _settingsFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _settingsFuture = _loadSettings();
-  }
-
-  Future<NotificationSettings> _loadSettings() {
-    return FirebaseMessaging.instance.getNotificationSettings();
-  }
-
-  Future<void> _requestPermission() async {
-    await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: true,
-    );
-
-    if (!mounted) return;
-    setState(() {
-      _settingsFuture = _loadSettings();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        decoration: BoxDecoration(
-          color: context.palette.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-        child: FutureBuilder<NotificationSettings>(
-          future: _settingsFuture,
-          builder: (context, snapshot) {
-            final settings = snapshot.data;
-            final authStatus = settings?.authorizationStatus;
-            final statusLabel = _notificationStatusLabel(authStatus);
-            final statusColor = _notificationStatusColor(context, authStatus);
-            final isAuthorized =
-                authStatus == AuthorizationStatus.authorized ||
-                authStatus == AuthorizationStatus.provisional;
-
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: context.palette.divider,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: statusColor.withAlpha(18),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.notifications_active_outlined,
-                        color: statusColor,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Notifications',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              color: context.palette.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            statusLabel,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  isAuthorized
-                      ? "Tu recevras ici les rappels d'épreuves, la validation des paiements et la publication des résultats."
-                      : "Les notifications push ne sont pas encore autorisées sur cet appareil.",
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: context.palette.textSecondary,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const _NotificationInfoRow(
-                  icon: Icons.schedule_outlined,
-                  title: "Rappels d'épreuves",
-                  subtitle: 'Avant le début des matières à venir.',
-                ),
-                const SizedBox(height: 12),
-                const _NotificationInfoRow(
-                  icon: Icons.payments_outlined,
-                  title: 'Paiements',
-                  subtitle: 'Validation ou refus de ta preuve de paiement.',
-                ),
-                const SizedBox(height: 12),
-                const _NotificationInfoRow(
-                  icon: Icons.emoji_events_outlined,
-                  title: 'Résultats',
-                  subtitle: "Dès qu'une note ou un bulletin est publié.",
-                ),
-                const SizedBox(height: 20),
-                if (!isAuthorized)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _requestPermission,
-                      icon: const Icon(Icons.notifications_active_outlined),
-                      label: Text('Autoriser les notifications'),
-                    ),
-                  ),
-                if (!isAuthorized) const SizedBox(height: 12),
-                Builder(
-                  builder: (context) {
-                    const gold = Color(0xFFF5B731);
-                    final isDark =
-                        Theme.of(context).brightness == Brightness.dark;
-                    final btnStyle =
-                        isDark
-                            ? OutlinedButton.styleFrom(
-                              foregroundColor: gold,
-                              side: BorderSide(
-                                color: gold.withAlpha(160),
-                                width: 1.2,
-                              ),
-                            )
-                            : null;
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: widget.onOpenPlanning,
-                            style: btnStyle,
-                            icon: const Icon(Icons.calendar_month_outlined),
-                            label: const Text('Planning'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: widget.onOpenResults,
-                            style: btnStyle,
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: const Text('Résultats'),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _NotificationInfoRow extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  const _NotificationInfoRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    const gold = Color(0xFFF5B731);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final iconColor = isDark ? gold : AppColors.primary;
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color:
-                isDark ? gold.withAlpha(28) : AppColors.primary.withAlpha(10),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, size: 18, color: iconColor),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: context.palette.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: context.palette.textSecondary,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-String _notificationStatusLabel(AuthorizationStatus? status) {
-  switch (status) {
-    case AuthorizationStatus.authorized:
-      return 'Notifications activées';
-    case AuthorizationStatus.provisional:
-      return 'Notifications autorisées provisoirement';
-    case AuthorizationStatus.denied:
-      return 'Notifications bloquées';
-    case AuthorizationStatus.notDetermined:
-      return 'Notifications non configurées';
-    default:
-      return 'Vérification des notifications...';
-  }
-}
-
-Color _notificationStatusColor(
-  BuildContext context,
-  AuthorizationStatus? status,
-) {
-  switch (status) {
-    case AuthorizationStatus.authorized:
-      return AppColors.success;
-    case AuthorizationStatus.provisional:
-      return AppColors.info;
-    case AuthorizationStatus.denied:
-      return AppColors.warning;
-    case AuthorizationStatus.notDetermined:
-      return context.palette.textSecondary;
-    default:
-      return context.palette.textSecondary;
   }
 }
 
